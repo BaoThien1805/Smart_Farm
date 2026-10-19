@@ -1,0 +1,43 @@
+# Flutter and Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub/
+.pub-cache/
+/build/
+/coverage/
+.widget_preview/
+app.*.symbols
+app.*.map.json
+
+# Editor and machine-specific files
+.idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+*.swp
+*.log
+__pycache__/
+*.pyc
+
+# Backend dependencies, output and local data
+node_modules/
+dist/
+.data/
+.local/
+.env
+.env.*
+!.env.example
+coverage/
+
+# Exported files and local tooling
+/outputs/
+/.agents/
+/.codegraph/
+/tmp/
+*.apk
+*.aab
+*.jks
+*.keystore
+key.properties
