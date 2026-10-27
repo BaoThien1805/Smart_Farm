@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
+import '../../core/farm_illustrations.dart';
+import '../../core/ui_components.dart';
 import '../../core/theme.dart';
 import 'farm_repository.dart';
 import 'farm_pages.dart';
@@ -52,8 +54,10 @@ class SpeciesChooser extends StatefulWidget {
 class _SpeciesChooserState extends State<SpeciesChooser> {
   List<FarmRecord> species = [];
   Set<String> selected = {};
-  bool loading = true, busy = false, expanded = false;
+  bool loading = true, busy = false, loadFailed = false;
   String? error;
+  final errorAnchor = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -61,7 +65,12 @@ class _SpeciesChooserState extends State<SpeciesChooser> {
   }
 
   Future<void> load() async {
-    setState(() => loading = true);
+    if (busy) return;
+    setState(() {
+      loading = true;
+      error = null;
+      loadFailed = false;
+    });
     try {
       final data = await Future.wait([
         widget.repository.get(
@@ -78,231 +87,325 @@ class _SpeciesChooserState extends State<SpeciesChooser> {
               .whereType<String>()
               .where((id) => species.any((s) => s.id == id))
               .toSet();
-          error = null;
         });
       }
     } on ApiException catch (e) {
-      if (mounted) setState(() => error = e.message);
+      if (mounted) {
+        setState(() {
+          error = e.message;
+          loadFailed = true;
+        });
+      }
     } finally {
       if (mounted) setState(() => loading = false);
     }
   }
 
   Future<void> submit({bool all = false}) async {
+    if (busy || loading || loadFailed) return;
+    final ids = all ? species.map((s) => s.id).toList() : selected.toList();
+    if (widget.admin && ids.isEmpty) return;
     setState(() {
       busy = true;
       error = null;
     });
-    final ids = all ? species.map((s) => s.id).toList() : selected.toList();
     try {
       await widget.repository.save('PATCH', '/farm/preferences', {
         'speciesIds': ids,
       });
       if (mounted) widget.onContinue(ids);
     } on ApiException catch (e) {
-      if (mounted) setState(() => error = e.message);
+      if (mounted) {
+        setState(() => error = e.message);
+        await WidgetsBinding.instance.endOfFrame;
+        if (mounted && errorAnchor.currentContext != null) {
+          await Scrollable.ensureVisible(
+            errorAnchor.currentContext!,
+            duration: const Duration(milliseconds: 200),
+          );
+        }
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }
   }
 
-  Widget groupCard(String group) {
-    final members = species
-        .where((s) => livestockGroup(s.text('name')) == group)
-        .toList();
-    final count = members.where((s) => selected.contains(s.id)).length;
-    return Card(
-      child: Column(
-        children: [
-          CheckboxListTile(
-            title: Text(group),
-            subtitle: Text(
-              members.isEmpty
-                  ? 'Chưa có loài trong nhóm này'
-                  : '$count/${members.length} loài đã chọn',
+  void toggle(FarmRecord animalSpecies) => setState(() {
+    if (!selected.add(animalSpecies.id)) selected.remove(animalSpecies.id);
+  });
+
+  Widget speciesCard(FarmRecord animalSpecies, double width) {
+    final checked = selected.contains(animalSpecies.id);
+    final enabled = !loading && !busy;
+    void onTap() => toggle(animalSpecies);
+    return SizedBox(
+      width: width,
+      child: Semantics(
+        label: animalSpecies.text('name'),
+        checked: checked,
+        enabled: enabled,
+        onTap: enabled ? onTap : null,
+        child: ExcludeSemantics(
+          child: Material(
+            color: checked ? FarmColors.mint : Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(FarmRadii.card),
+              side: BorderSide(
+                color: checked ? forest : line,
+                width: checked ? 2 : 1,
+              ),
             ),
-            tristate: true,
-            value: count == 0
-                ? false
-                : count == members.length
-                ? true
-                : null,
-            onChanged: busy || loading || members.isEmpty
-                ? null
-                : (_) => setState(() {
-                    if (count == members.length) {
-                      selected.removeAll(members.map((s) => s.id));
-                    } else {
-                      selected.addAll(members.map((s) => s.id));
-                    }
-                  }),
+            child: InkWell(
+              key: ValueKey('species-${animalSpecies.id}'),
+              borderRadius: BorderRadius.circular(FarmRadii.card),
+              onTap: enabled ? onTap : null,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  children: [
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: Icon(
+                        checked ? Icons.check_circle : Icons.circle_outlined,
+                        size: 24,
+                        color: checked ? forest : muted,
+                      ),
+                    ),
+                    FarmSpeciesIllustration(
+                      speciesCode: animalSpecies.text('code'),
+                      speciesName: animalSpecies.text('name'),
+                      size: 80,
+                      decorative: true,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      animalSpecies.text('name'),
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    if (animalSpecies.text('code').isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        animalSpecies.text('code'),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: muted),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
           ),
-          for (final s in members)
-            CheckboxListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 24),
-              value: selected.contains(s.id),
-              onChanged: busy
-                  ? null
-                  : (v) => setState(() {
-                      if (v == true) {
-                        selected.add(s.id);
-                      } else {
-                        selected.remove(s.id);
-                      }
-                    }),
-              title: Text(s.text('name')),
-              secondary: Icon(speciesIcon(s.text('name')), color: forest),
-            ),
-        ],
+        ),
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Brand(),
-      actions: [
-        TextButton(
-          onPressed: busy ? null : widget.onLogout,
-          child: const Text('Đăng xuất'),
+  Widget groupSelector(String group) {
+    final members = species
+        .where((s) => livestockGroup(s.text('name')) == group)
+        .toList();
+    final count = members.where((s) => selected.contains(s.id)).length;
+    return CheckboxListTile(
+      title: Text(group),
+      subtitle: Text(
+        members.isEmpty
+            ? 'Chưa có loài trong nhóm này'
+            : '$count/${members.length} loài đã chọn',
+      ),
+      tristate: true,
+      value: count == 0
+          ? false
+          : count == members.length
+          ? true
+          : null,
+      onChanged: busy || loading || members.isEmpty
+          ? null
+          : (_) => setState(() {
+              if (count == members.length) {
+                selected.removeAll(members.map((s) => s.id));
+              } else {
+                selected.addAll(members.map((s) => s.id));
+              }
+            }),
+    );
+  }
+
+  Future<void> openCatalog() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Danh mục trang trại')),
+          body: CatalogPage(
+            repository: widget.repository,
+            admin: true,
+            initialKind: 'species',
+            availableKinds: const ['species', 'breeds', 'areas'],
+          ),
         ),
-      ],
-    ),
-    body: SafeArea(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1000),
-          child: SingleChildScrollView(
-            padding: EdgeInsets.all(
-              MediaQuery.sizeOf(context).width < 600 ? 16 : 24,
-            ),
+      ),
+    );
+    if (mounted) load();
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: !busy,
+    child: Scaffold(
+      appBar: AppBar(
+        title: const Brand(),
+        actions: [
+          TextButton(
+            onPressed: busy ? null : widget.onLogout,
+            child: const Text('Đăng xuất'),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1000),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Chào ${widget.userName}.',
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-                const SizedBox(height: 12),
-                const Text('Bắt đầu quản lý công việc chăn nuôi của bạn.'),
-                const SizedBox(height: 24),
-                Card(
-                  child: Padding(
+                Expanded(
+                  child: SingleChildScrollView(
                     padding: const EdgeInsets.all(16),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const Icon(
-                          Icons.agriculture_outlined,
-                          size: 40,
-                          color: forest,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          widget.admin
-                              ? 'Bạn có trang trại riêng?'
-                              : 'Trang trại của bạn',
-                          style: Theme.of(context).textTheme.titleLarge,
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            'Chọn loài nuôi',
+                            style: Theme.of(context).textTheme.headlineMedium,
+                          ),
                         ),
                         const SizedBox(height: 8),
+                        Text('Chào ${widget.userName}.'),
+                        const SizedBox(height: 8),
                         const Text(
-                          'Chọn những loài đang nuôi để theo dõi vật nuôi, chăm sóc và kho.',
+                          'Chọn các loài vật nuôi bạn muốn quản lý trong trang trại. Bạn có thể bổ sung thêm sau.',
                         ),
+                        const SizedBox(height: 20),
+                        Column(
+                          key: errorAnchor,
+                          children: [if (error != null) FeedbackBox(error!)],
+                        ),
+                        if (loading) const LinearProgressIndicator(),
+                        if (!loading && !loadFailed && species.isEmpty)
+                          const FarmInfoCard(
+                            child: Text(
+                              'Chưa có loài. Chủ trang trại cần thêm loài trong danh mục để hoàn tất thiết lập.',
+                            ),
+                          ),
+                        if (!loading && !loadFailed)
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final columns = constraints.maxWidth >= 800
+                                  ? 4
+                                  : constraints.maxWidth >= 500
+                                  ? 3
+                                  : 2;
+                              final width =
+                                  (constraints.maxWidth - (columns - 1) * 12) /
+                                  columns;
+                              return Wrap(
+                                spacing: 12,
+                                runSpacing: 12,
+                                children: [
+                                  for (final item in species)
+                                    speciesCard(item, width),
+                                ],
+                              );
+                            },
+                          ),
                         const SizedBox(height: 16),
-                        FilledButton.icon(
-                          onPressed: busy
-                              ? null
-                              : () => setState(() => expanded = !expanded),
-                          icon: Icon(
-                            expanded ? Icons.expand_less : Icons.expand_more,
+                        if (species.isNotEmpty && !loadFailed)
+                          Card(
+                            child: ExpansionTile(
+                              title: const Text('Chọn theo nhóm'),
+                              children: [
+                                for (final group in livestockGroups)
+                                  groupSelector(group),
+                              ],
+                            ),
                           ),
-                          label: Text(
-                            widget.admin
-                                ? 'Quản lý trang trại của tôi'
-                                : 'Vào trang trại làm việc',
-                          ),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 8,
+                          children: [
+                            TextButton.icon(
+                              onPressed: loading || busy ? null : load,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Tải lại'),
+                            ),
+                            if (widget.admin)
+                              TextButton.icon(
+                                onPressed: busy ? null : openCatalog,
+                                icon: const Icon(Icons.add),
+                                label: const Text('Quản lý loài / giống'),
+                              ),
+                          ],
                         ),
                       ],
                     ),
                   ),
                 ),
-                if (expanded) ...[
-                  const SizedBox(height: 24),
-                  Text(
-                    'Chọn vật nuôi trong trang trại',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Chọn các loài trang trại đang nuôi. Lựa chọn được lưu; sau này bổ sung tại mục Thêm loài.',
-                  ),
-                  const SizedBox(height: 16),
-                  if (error != null) FeedbackBox(error!),
-                  if (loading) const LinearProgressIndicator(),
-                  if (!loading && species.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 20),
-                      child: Text(
-                        'Chưa có loài. ADMIN có thể thêm loài trong danh mục hoặc vào trang trại trước.',
-                      ),
-                    ),
-                  for (final group in livestockGroups) groupCard(group),
-                  const SizedBox(height: 24),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      FilledButton(
-                        onPressed: loading || busy || selected.isEmpty
-                            ? null
-                            : () => submit(),
-                        child: Text(
-                          busy
-                              ? 'Đang lưu…'
-                              : 'Tiếp tục (${selected.length} loài)',
+                      Text(
+                        'Bạn đã chọn ${selected.length} loài',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(
+                              child: FilledButton(
+                                key: const ValueKey('species-continue'),
+                                onPressed:
+                                    loading ||
+                                        busy ||
+                                        loadFailed ||
+                                        selected.isEmpty
+                                    ? null
+                                    : () => submit(),
+                                child: Text(
+                                  busy
+                                      ? 'Đang lưu…'
+                                      : 'Tiếp tục (${selected.length} loài)',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed:
+                                    loading ||
+                                        busy ||
+                                        loadFailed ||
+                                        (widget.admin && species.isEmpty)
+                                    ? null
+                                    : () => submit(all: true),
+                                child: const Text(
+                                  'Xem tất cả',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      OutlinedButton(
-                        onPressed: loading || busy
-                            ? null
-                            : () => submit(all: true),
-                        child: const Text('Xem tất cả'),
-                      ),
-                      TextButton.icon(
-                        onPressed: loading || busy ? null : load,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Tải lại'),
-                      ),
-                      if (widget.admin)
-                        TextButton.icon(
-                          onPressed: busy
-                              ? null
-                              : () async {
-                                  await Navigator.push(
-                                    context,
-                                    MaterialPageRoute<void>(
-                                      builder: (_) => Scaffold(
-                                        appBar: AppBar(
-                                          title: const Text(
-                                            'Danh mục trang trại',
-                                          ),
-                                        ),
-                                        body: CatalogPage(
-                                          repository: widget.repository,
-                                          admin: true,
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                  if (mounted) load();
-                                },
-                          icon: const Icon(Icons.add),
-                          label: const Text('Quản lý loài / giống'),
-                        ),
                     ],
                   ),
-                ],
+                ),
               ],
             ),
           ),

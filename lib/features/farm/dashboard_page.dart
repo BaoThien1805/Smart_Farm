@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../core/api_client.dart';
+import '../../core/farm_illustrations.dart';
+import '../../core/farm_feature_icon.dart';
 import '../../core/theme.dart';
+import '../../core/ui_components.dart';
 import 'farm_repository.dart';
 import 'farm_widgets.dart';
 import 'finance_page.dart';
@@ -11,9 +15,11 @@ class FarmDashboard extends StatefulWidget {
   final FarmRepository repository;
   final String userName;
   final VoidCallback onAnimals, onCare;
-  final VoidCallback? onStock, onFinance;
-  final bool admin;
-  final bool financeAccess;
+  final VoidCallback? onStock, onFinance, onPens;
+  final bool admin, financeAccess;
+  final int locationRevision;
+  final int refreshRevision;
+  final VoidCallback? onLocationChanged;
   const FarmDashboard({
     super.key,
     required this.repository,
@@ -22,8 +28,12 @@ class FarmDashboard extends StatefulWidget {
     required this.onCare,
     this.onStock,
     this.onFinance,
+    this.onPens,
     this.admin = false,
     this.financeAccess = false,
+    this.locationRevision = 0,
+    this.refreshRevision = 0,
+    this.onLocationChanged,
   });
   @override
   State<FarmDashboard> createState() => _FarmDashboardState();
@@ -32,7 +42,29 @@ class FarmDashboard extends StatefulWidget {
 class _FarmDashboardState extends State<FarmDashboard> {
   late final controller = FarmController(widget.repository);
   String category = 'farm';
-  void load() => controller.load('/farm/dashboard');
+  String? farmName;
+  int locationGeneration = 0;
+  bool get canFinance => widget.admin || widget.financeAccess;
+  bool get hasData => controller.data.isNotEmpty;
+  void load() {
+    controller.load('/farm/dashboard', withPenSpecies: true);
+    loadFarmName();
+  }
+
+  Future<void> loadFarmName() async {
+    final generation = ++locationGeneration;
+    try {
+      final response = await widget.repository.get('/farm/location');
+      final location = response['location'];
+      final name = location is Map ? location['name']?.toString().trim() : null;
+      if (mounted && generation == locationGeneration) {
+        setState(() => farmName = name);
+      }
+    } on ApiException {
+      // The header name is optional; dashboard data and weather stay independent.
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -40,10 +72,357 @@ class _FarmDashboardState extends State<FarmDashboard> {
   }
 
   @override
+  void didUpdateWidget(covariant FarmDashboard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.refreshRevision != widget.refreshRevision) load();
+    if (oldWidget.locationRevision != widget.locationRevision) loadFarmName();
+  }
+
+  @override
   void dispose() {
     controller.dispose();
     super.dispose();
   }
+
+  String count(String key) => controller.data[key]?.toString() ?? '—';
+
+  Widget header() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  farmName?.isNotEmpty == true
+                      ? farmName!
+                      : 'Trang trại của bạn',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Chào ${widget.userName}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      (controller.data['today']?.toString() ?? farmToday())
+                          .split('-')
+                          .reversed
+                          .join('/'),
+                      style: const TextStyle(color: muted),
+                    ),
+                    IconButton(
+                      tooltip: 'Tải lại',
+                      onPressed: controller.loading ? null : load,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 112,
+            child: WeatherCard(
+              key: ValueKey(widget.locationRevision),
+              repository: widget.repository,
+              admin: widget.admin,
+              compact: true,
+              onLocationChanged: widget.onLocationChanged,
+            ),
+          ),
+        ],
+      ),
+    ],
+  );
+
+  Widget metrics() => LayoutBuilder(
+    builder: (context, constraints) {
+      final columns =
+          MediaQuery.textScalerOf(context).scale(14) <= 18 ||
+              constraints.maxWidth >= 600
+          ? 3
+          : 2;
+      final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+      final labelStyle = Theme.of(context).textTheme.bodySmall
+          ?.copyWith(color: ink);
+      // Reserve the same label height so a wrapped caption cannot make one
+      // summary card taller than its neighbours, including with large text.
+      var labelHeight = 0.0;
+      for (final label in ['Đang nuôi', 'Chuồng hoạt động', 'Việc hôm nay']) {
+        final painter = TextPainter(
+          text: TextSpan(text: label, style: labelStyle),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          maxLines: 2,
+        )..layout(maxWidth: width > 24 ? width - 24 : 1);
+        if (painter.height > labelHeight) labelHeight = painter.height;
+        painter.dispose();
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final metric in [
+                (
+                  'activeAnimals',
+                  'Đang nuôi',
+                  Icons.pets_outlined,
+                  FarmColors.mint,
+                  widget.onAnimals,
+                ),
+                (
+                  'activePens',
+                  'Chuồng hoạt động',
+                  Icons.home_work_outlined,
+                  FarmColors.peach,
+                  widget.onPens,
+                ),
+                (
+                  'due',
+                  'Việc hôm nay',
+                  Icons.calendar_month_outlined,
+                  FarmColors.lavender,
+                  widget.onCare,
+                ),
+              ])
+                SizedBox(
+                  width: width,
+                  child: FarmInfoCard(
+                    color: metric.$4,
+                    padding: EdgeInsets.zero,
+                    child: InkWell(
+                      key: ValueKey('dashboard-${metric.$1}'),
+                      onTap: metric.$5,
+                      borderRadius: BorderRadius.circular(FarmRadii.card),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            FarmFeatureIcon(
+                              icon: metric.$3,
+                              size: 38,
+                              background: metric.$4,
+                              color: metric.$1 == 'due'
+                                  ? FarmColors.lilac
+                                  : metric.$1 == 'activePens'
+                                  ? FarmColors.coral
+                                  : forest,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              count(metric.$1),
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                            SizedBox(
+                              height: labelHeight,
+                              child: Text(
+                                metric.$2,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: labelStyle,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          FarmInfoCard(
+            color: FarmColors.mint,
+            padding: EdgeInsets.zero,
+            child: ListTile(
+              key: const ValueKey('dashboard-needsCare'),
+              onTap: widget.onAnimals,
+              leading: const FarmFeatureIcon(
+                icon: Icons.health_and_safety_outlined,
+                color: forest,
+                size: 38,
+              ),
+              title: const Text('Cần chăm sóc'),
+              trailing: Text(
+                count('needsCare'),
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+
+  Widget care() => DashboardPanel(
+    title: 'Việc cần làm',
+    subtitle:
+        '${count('due')} việc hôm nay · ${count('overdue')} quá hạn · 7 ngày tới',
+    icon: Icons.calendar_month_outlined,
+    action: TextButton(
+      onPressed: widget.onCare,
+      child: const Text('Xem tất cả'),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (controller.items('tasks').isEmpty)
+          const DashboardEmpty(
+            icon: Icons.event_available_outlined,
+            text: 'Chưa có lịch chăm sóc sắp tới.',
+          ),
+        for (final task in controller.items('tasks').take(3))
+          Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            color: FarmColors.cream,
+            child: ListTile(
+              onTap: widget.onCare,
+              leading: const Icon(Icons.event_note_outlined, color: forest),
+              title: Text('${task.text('animalCode')} · ${task.text('title')}'),
+              subtitle: Text(
+                '${farmDate(task.text('dueDate'))} · ${label(task.text('kind'))}'
+                '${task.text('dueDate').compareTo(controller.data['today']?.toString() ?? farmToday()) < 0 ? ' · Quá hạn' : ''}',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+            ),
+          ),
+      ],
+    ),
+  );
+
+  Widget penOverview() => LayoutBuilder(
+    builder: (context, c) {
+      final columns =
+          c.maxWidth >= 300 && MediaQuery.textScalerOf(context).scale(14) <= 18
+          ? 4
+          : 2;
+      final width = (c.maxWidth - (columns - 1) * 8) / columns;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const FarmSectionHeader(title: 'Tình trạng chuồng trại'),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final pen in controller.items('pens').take(4))
+                SizedBox(
+                  width: width,
+                  child: FarmInfoCard(
+                    padding: EdgeInsets.zero,
+                    child: InkWell(
+                      onTap: widget.onPens,
+                      borderRadius: BorderRadius.circular(FarmRadii.card),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Column(
+                          children: [
+                            FarmPenIllustration(
+                              iconKey: pen.text('iconKey'),
+                              iconData: pen.text('iconData'),
+                              size: 52,
+                              decorative: true,
+                              speciesNames:
+                                  (pen.values['speciesNames'] as List?)
+                                      ?.whereType<String>()
+                                      .toList() ??
+                                  const [],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              pen.text('name'),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    color: ink,
+                                  ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${pen.integer('occupied')}/${pen.integer('capacity')} con',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            const SizedBox(height: 4),
+                            LinearProgressIndicator(
+                              value: pen.integer('capacity') > 0
+                                  ? (pen.integer('occupied') /
+                                            pen.integer('capacity'))
+                                        .clamp(0, 1)
+                                  : 0,
+                              color:
+                                  pen.integer('occupied') >=
+                                      pen.integer('capacity')
+                                  ? FarmColors.gold
+                                  : const Color(0xFF2CBD6B),
+                              backgroundColor: FarmColors.mint,
+                              minHeight: 5,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      );
+    },
+  );
+
+  Widget alerts() => DashboardPanel(
+    title: 'Cần lưu ý',
+    subtitle: 'Tồn kho thức ăn toàn trang trại',
+    icon: Icons.warning_amber_rounded,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (controller.items('lowStockFeeds').isEmpty)
+          const DashboardEmpty(
+            icon: Icons.check_circle_outline,
+            text: 'Kho thức ăn chưa có cảnh báo.',
+          ),
+        for (final feed in controller.items('lowStockFeeds'))
+          Card(
+            color: FarmColors.amber,
+            margin: const EdgeInsets.only(bottom: 8),
+            child: ListTile(
+              onTap: widget.onStock,
+              leading: const Icon(
+                Icons.inventory_2_outlined,
+                color: FarmColors.warning,
+              ),
+              title: Text(feed.text('name')),
+              subtitle: Text(
+                'Tồn thấp · ${feed.number('stock')} kg / ngưỡng ${feed.number('lowStock')} kg',
+              ),
+              trailing: widget.onStock == null
+                  ? null
+                  : const Icon(Icons.chevron_right),
+            ),
+          ),
+      ],
+    ),
+  );
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -53,264 +432,84 @@ class _FarmDashboardState extends State<FarmDashboard> {
       title: '',
       refresh: load,
       children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF174B38), Color(0xFF247155)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+        header(),
+        const SizedBox(height: 8),
+        const FarmWelcomeBanner(),
+        if (controller.error != null && hasData)
+          const Padding(
+            padding: EdgeInsets.only(top: 12),
+            child: Text(
+              'Đang hiển thị dữ liệu từ lần tải trước. Hãy thử tải lại.',
             ),
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: forest.withValues(alpha: .10),
-                blurRadius: 16,
-                offset: const Offset(0, 6),
-              ),
-            ],
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final small = constraints.maxWidth < 600;
-                  final date =
-                      (controller.data['today']?.toString() ?? farmToday())
-                          .split('-')
-                          .reversed
-                          .join('/');
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Chào ${widget.userName}',
-                              style: TextStyle(
-                                fontSize: small ? 20 : 28,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
-                            Wrap(
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                Text(
-                                  date,
-                                  style: const TextStyle(
-                                    color: Color(0xFFDDEEE5),
-                                    fontSize: 13,
-                                  ),
-                                ),
-                                IconButton(
-                                  tooltip: 'Tải lại',
-                                  onPressed: controller.loading ? null : load,
-                                  icon: const Icon(
-                                    Icons.refresh,
-                                    size: 18,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      SizedBox(
-                        width: small ? 130 : 180,
-                        child: WeatherCard(
-                          repository: widget.repository,
-                          admin: widget.admin,
-                          compact: true,
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: forest,
-                    ),
-                    onPressed: widget.onAnimals,
-                    icon: const Icon(Icons.pets_outlined, size: 18),
-                    label: const Text('Xem vật nuôi'),
-                  ),
-                  OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: const BorderSide(color: Color(0xFF9AC5AF)),
-                    ),
-                    onPressed: widget.onCare,
-                    icon: const Icon(Icons.event_note, size: 18),
-                    label: const Text('Lịch chăm sóc'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
             for (final entry in {
               'farm': ('Trang trại', Icons.pets_outlined),
-              if (widget.admin || widget.financeAccess)
-                'finance': ('Tài chính', Icons.bar_chart_rounded),
+              if (canFinance) 'finance': ('Tài chính', Icons.bar_chart_rounded),
               'alerts': ('Cảnh báo', Icons.notifications_outlined),
             }.entries)
               ChoiceChip(
-                avatar: Icon(entry.value.$2, size: 18),
+                showCheckmark: false,
                 label: Text(entry.value.$1),
                 selected: category == entry.key,
                 onSelected: (_) => setState(() => category = entry.key),
-                materialTapTargetSize: MaterialTapTargetSize.padded,
               ),
           ],
         ),
         const SizedBox(height: 16),
-        if (category == 'farm') ...[
-          Text(
-            'Trang trại trong ngày',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, c) {
-              final columns = c.maxWidth >= 650
-                  ? 3
-                  : c.maxWidth >= 300
-                  ? 2
-                  : 1;
-              final width = (c.maxWidth - (columns - 1) * 12) / columns;
-              const metrics = {
-                'activeAnimals': ('Đang nuôi', Icons.pets_outlined),
-                'activePens': ('Chuồng hoạt động', Icons.home_work_outlined),
-                'needsCare': ('Cần chăm sóc', Icons.health_and_safety_outlined),
-              };
-              if (c.maxWidth < 600) {
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        for (final e in metrics.entries)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  e.value.$2,
-                                  color: e.key == 'needsCare'
-                                      ? revenueAmber
-                                      : forest,
-                                  size: 22,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(child: Text(e.value.$1)),
-                                Text(
-                                  '${controller.data[e.key] ?? '—'}',
-                                  style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w700,
-                                    color: ink,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                );
-              }
-              return Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  for (final e in metrics.entries)
-                    SizedBox(
-                      width: width,
-                      child: Container(
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: line),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color:
-                                    e.key == 'overdue' || e.key == 'needsCare'
-                                    ? const Color(0xFFFFF2DE)
-                                    : e.key == 'due'
-                                    ? const Color(0xFFEAF0FA)
-                                    : const Color(0xFFECF4EF),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Icon(
-                                e.value.$2,
-                                color:
-                                    e.key == 'overdue' || e.key == 'needsCare'
-                                    ? revenueAmber
-                                    : e.key == 'due'
-                                    ? revenueBlue
-                                    : forest,
-                              ),
-                            ),
-                            const SizedBox(height: 14),
-                            Text(
-                              '${controller.data[e.key] ?? '—'}',
-                              style: Theme.of(context).textTheme.headlineMedium,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(e.value.$1),
-                          ],
-                        ),
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 24),
-        ],
-        if (category == 'finance' &&
-            (widget.admin || widget.financeAccess) &&
-            controller.data['finance'] is Map) ...[
-          DashboardPanel(
-            title: 'Tài chính tháng này',
-            subtitle: 'Toàn trang trại · VND · Chỉ tính khoản hợp lệ',
-            icon: Icons.account_balance_wallet_outlined,
-            action: TextButton(
-              onPressed: widget.onFinance,
-              child: const Text('Xem báo cáo'),
+        if (hasData && category == 'farm') ...[
+          metrics(),
+          const SizedBox(height: 16),
+          care(),
+          const SizedBox(height: 16),
+          if (controller.items('pens').isNotEmpty) ...[
+            penOverview(),
+            const SizedBox(height: 16),
+          ],
+          FarmInfoCard(
+            color: FarmColors.peach,
+            padding: EdgeInsets.zero,
+            child: ListTile(
+              key: const ValueKey('dashboard-pens'),
+              onTap: widget.onPens,
+              leading: const FarmPenIllustration(size: 48, decorative: true),
+              title: const Text('Chuồng trại'),
+              subtitle: Text(
+                '${count('activePens')} chuồng hoạt động · Xem danh sách và sức chứa',
+              ),
+              trailing: widget.onPens == null
+                  ? null
+                  : const Icon(Icons.chevron_right),
             ),
-            child: DashboardFinanceCards(
-              summary: Map<String, dynamic>.from(
-                controller.data['finance'] as Map,
+          ),
+          if (controller.items('lowStockFeeds').isNotEmpty) ...[
+            const SizedBox(height: 16),
+            alerts(),
+          ],
+        ],
+        if (hasData && category == 'alerts') alerts(),
+        if (hasData && category == 'finance' && canFinance) ...[
+          if (controller.data['finance'] is Map) ...[
+            DashboardPanel(
+              title: 'Tài chính tháng này',
+              subtitle: 'Toàn trang trại · VND · Chỉ tính khoản hợp lệ',
+              icon: Icons.account_balance_wallet_outlined,
+              action: TextButton(
+                onPressed: widget.onFinance,
+                child: const Text('Xem báo cáo'),
+              ),
+              child: DashboardFinanceCards(
+                summary: Map<String, dynamic>.from(
+                  controller.data['finance'] as Map,
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 20),
+            const SizedBox(height: 20),
+          ],
           DashboardPanel(
             title: 'Biểu đồ doanh thu',
             subtitle: '6 tháng gần nhất · VND · Toàn trang trại',
@@ -327,115 +526,7 @@ class _FarmDashboardState extends State<FarmDashboard> {
               ],
             ),
           ),
-          const SizedBox(height: 24),
         ],
-        if (category != 'finance')
-          LayoutBuilder(
-            builder: (context, c) {
-              final care = DashboardPanel(
-                title: 'Lịch chăm sóc',
-                subtitle:
-                    '${controller.data['due'] ?? 0} việc hôm nay · ${controller.data['overdue'] ?? 0} quá hạn · 7 ngày tới',
-                icon: Icons.event_note,
-                action: TextButton(
-                  onPressed: widget.onCare,
-                  child: const Text('Xem tất cả'),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (controller.items('tasks').isEmpty)
-                      const DashboardEmpty(
-                        icon: Icons.event_available_outlined,
-                        text: 'Chưa có lịch chăm sóc sắp tới.',
-                      ),
-                    for (final t in controller.items('tasks').take(3))
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: widget.onCare,
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF3F7F1),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '${t.text('animalCode')} · ${t.text('title')}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  '${t.text('dueDate')} · ${label(t.text('kind'))}',
-                                ),
-                                if (t
-                                        .text('dueDate')
-                                        .compareTo(
-                                          controller.data['today']
-                                                  ?.toString() ??
-                                              farmToday(),
-                                        ) <
-                                    0)
-                                  const Chip(label: Text('Quá hạn')),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              );
-              final alerts = DashboardPanel(
-                title: 'Cần lưu ý',
-                subtitle: 'Kho thức ăn và sức chứa toàn trang trại',
-                icon: Icons.warning_amber_rounded,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (controller.items('lowStockFeeds').isEmpty &&
-                        controller.items('fullPens').isEmpty)
-                      const DashboardEmpty(
-                        icon: Icons.check_circle_outline,
-                        text: 'Kho và chuồng chưa có cảnh báo.',
-                      ),
-                    for (final f in controller.items('lowStockFeeds'))
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        onTap: widget.onStock,
-                        leading: const Icon(
-                          Icons.inventory_2_outlined,
-                          color: Color(0xFF92502A),
-                        ),
-                        title: Text(f.text('name')),
-                        subtitle: Text(
-                          'Tồn thấp · ${f.number('stock')} kg / ngưỡng ${f.number('lowStock')} kg',
-                        ),
-                      ),
-                    for (final p in controller.items('fullPens'))
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(
-                          Icons.home_work_outlined,
-                          color: Color(0xFF92502A),
-                        ),
-                        title: Text('${p.text('code')} · ${p.text('name')}'),
-                        subtitle: Text(
-                          'Chuồng đầy · ${p.integer('occupied')}/${p.integer('capacity')} con',
-                        ),
-                      ),
-                  ],
-                ),
-              );
-              return category == 'farm' ? care : alerts;
-            },
-          ),
       ],
     ),
   );
@@ -481,7 +572,7 @@ class DashboardPanel extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: const Color(0xFFECF4EF),
+                color: FarmColors.mint,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(icon, color: forest),
@@ -547,7 +638,7 @@ class RevenueTable extends StatelessWidget {
                   margin: const EdgeInsets.only(bottom: 12),
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF3F7F1),
+                    color: FarmColors.cream,
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Column(

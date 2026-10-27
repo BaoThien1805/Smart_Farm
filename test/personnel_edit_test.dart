@@ -98,7 +98,9 @@ void main() {
       );
       await t.pumpAndSettle();
       expect(find.text('Đổi ảnh đại diện'), findsNothing);
-      await t.tap(find.text('Chỉnh sửa'));
+      await t.tap(find.byKey(const ValueKey('personnel-menu-staff')));
+      await t.pumpAndSettle();
+      await t.tap(find.widgetWithText(PopupMenuItem<String>, 'Chỉnh sửa'));
       await t.pumpAndSettle();
       final name = find.widgetWithText(TextFormField, 'Họ và tên');
       await t.ensureVisible(name);
@@ -107,7 +109,9 @@ void main() {
       await t.pumpAndSettle();
       expect(writes, 0);
       expect(find.text('Nhân viên cũ'), findsOneWidget);
-      await t.tap(find.text('Chỉnh sửa'));
+      await t.tap(find.byKey(const ValueKey('personnel-menu-staff')));
+      await t.pumpAndSettle();
+      await t.tap(find.widgetWithText(PopupMenuItem<String>, 'Chỉnh sửa'));
       await t.pumpAndSettle();
       await t.ensureVisible(name);
       await t.enterText(name, 'Nhân viên mới');

@@ -16,6 +16,7 @@
     "db:start": "tsx --env-file=.env scripts/database.ts",
     "db:migrate": "tsx --env-file=.env scripts/migrate.ts",
     "db:seed:demo": "tsx --env-file=.env scripts/seed-demo.ts",
+    "db:seed:showcase": "tsx --env-file=.env --env-file-if-exists=../.local/demo.env scripts/seed-showcase.ts",
     "db:seed": "tsx --env-file=.env scripts/seed.ts",
     "test": "tsx --test --test-concurrency=1 test/*.test.ts",
     "typecheck": "tsc --noEmit",

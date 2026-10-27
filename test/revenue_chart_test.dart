@@ -106,4 +106,54 @@ void main() {
     expect(find.text('54.043.195.528.445.958 ₫'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'two year report scrolls month bars and retains all three metrics and zero months',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 1100);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final records = List.generate(25, (i) {
+        final d = DateTime(2024, 10 + i);
+        return FarmRecord({
+          'month': '${d.year}-${d.month.toString().padLeft(2, '0')}',
+          'salesRevenue': i == 24 ? '0' : '123456789',
+          'income': '223456789',
+          'expense': '300000000',
+        });
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: farmTheme(),
+          home: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(1.3)),
+            child: Scaffold(
+              body: SingleChildScrollView(
+                child: RevenueChart(monthly: records),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(ChoiceChip), findsNWidgets(28));
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('revenue-bar-2026-10')))
+            .height,
+        0,
+      );
+      final horizontal = find.byWidgetPredicate(
+        (w) =>
+            w is SingleChildScrollView && w.scrollDirection == Axis.horizontal,
+      );
+      await tester.drag(horizontal, const Offset(-1600, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('T10').last.hitTestable(), findsOneWidget);
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Tổng thu'));
+      await tester.pumpAndSettle();
+      expect(find.text('5.586.419.725 ₫'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

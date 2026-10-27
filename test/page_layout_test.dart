@@ -1,9 +1,4 @@
-import 'dart:io';
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 import 'package:smart_farm/core/api_client.dart';
@@ -19,27 +14,14 @@ import 'package:smart_farm/features/users/users_page.dart';
 
 import 'farm_test.dart' as fixture;
 import 'widget_test.dart' show MemoryStore;
+import 'support/ui_preview.dart';
 
 void main() {
-  if (const bool.fromEnvironment('EXPORT_UI_PREVIEWS')) {
+  if (exportUiPreviews) {
     TestWidgetsFlutterBinding.ensureInitialized();
-    setUpAll(() async {
-      final fontFile = File(
-        '${Platform.environment['WINDIR']}/Fonts/segoeui.ttf',
-      );
-      if (await fontFile.exists()) {
-        final font = FontLoader('Roboto')
-          ..addFont(
-            fontFile.readAsBytes().then((bytes) => ByteData.sublistView(bytes)),
-          );
-        await font.load();
-      }
-      final icons = FontLoader('MaterialIcons')
-        ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
-      await icons.load();
-    });
+    setUpAll(loadUiPreviewFonts);
   }
-  for (final width in [320.0, 1200.0]) {
+  for (final width in [320.0, 360.0, 412.0, 1200.0]) {
     for (final page in [
       'animals',
       'detail',
@@ -148,32 +130,17 @@ void main() {
         );
         await t.pumpAndSettle();
         expect(t.takeException(), isNull);
-        if (const bool.fromEnvironment('EXPORT_UI_PREVIEWS')) {
-          final render =
-              boundary.currentContext!.findRenderObject()!
-                  as RenderRepaintBoundary;
-          await t.runAsync(() async {
-            final image = await render.toImage();
-            try {
-              final png = await image.toByteData(
-                format: ui.ImageByteFormat.png,
-              );
-              final folder = Directory('outputs/ui-refresh-20261013');
-              await folder.create(recursive: true);
-              await File('${folder.path}/$page-${width.toInt()}.png')
-                  .writeAsBytes(png!.buffer.asUint8List());
-            } finally {
-              image.dispose();
-            }
-          });
-        }
+        await exportUiPreview(t, boundary, '$page-${width.toInt()}.png');
         if (page == 'animals' && width == 320) {
           await t.tap(find.text('Bộ lọc vật nuôi'));
           await t.pumpAndSettle();
-          expect(
-            find.widgetWithText(DropdownButtonFormField<String>, 'Sức khỏe'),
-            findsOneWidget,
+          final healthFilter = find.byKey(
+            const ValueKey('Tình trạng sức khỏe-NEEDS_CARE'),
           );
+          await t.ensureVisible(healthFilter);
+          await t.pumpAndSettle();
+          expect(find.text('Tình trạng sức khỏe'), findsOneWidget);
+          expect(healthFilter, findsOneWidget);
           expect(t.takeException(), isNull);
         }
         await t.pumpWidget(const SizedBox());

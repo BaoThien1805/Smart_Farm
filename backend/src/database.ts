@@ -1,9 +1,11 @@
 import { catalogCodesMigration } from "./codes.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool, types, type PoolClient } from "pg";
-import { farmMigration } from "./farm/migration.js";
+import { farmMigration, penDeletionMigration } from "./farm/migration.js";
 import { inventoryMigration } from "./inventory/migration.js";
 import { financeMigration } from "./finance/migration.js";
+import { reproductionMigration } from "./reproduction/migration.js";
+import { penIconsMigration } from "./farm/pen-icons.js";
 types.setTypeParser(1082, (value) => value);
 const clinicalMigration = `ALTER TABLE health_records ADD COLUMN record_type text NOT NULL DEFAULT 'OBSERVATION' CHECK(record_type IN ('OBSERVATION','EXAM'));
 ALTER TABLE health_records ADD COLUMN diagnosis text NOT NULL DEFAULT '' CHECK(length(diagnosis)<=2000);
@@ -62,6 +64,9 @@ export async function createFarmTables(client: PoolClient, schema: string) {
   await client.query(financeMigration);
   await client.query(clinicalMigration);
   await client.query(catalogCodesMigration);
+  await client.query(reproductionMigration);
+  await client.query(penIconsMigration);
+  await client.query(penDeletionMigration);
 }
 
 export async function transaction<T>(
@@ -278,6 +283,66 @@ export async function migrate(pool: Pool) {
       );
       await client.query(
         "INSERT INTO public.schema_migrations(version) VALUES(11)",
+      );
+    }
+    const reproduction = await client.query(
+      "SELECT 1 FROM public.schema_migrations WHERE version=12",
+    );
+    if (!reproduction.rowCount) {
+      const farms = await client.query<{ schema_name: string }>(
+        "SELECT schema_name FROM public.farms ORDER BY id",
+      );
+      for (const farm of farms.rows) {
+        if (!/^(public|farm_[a-f0-9]{32})$/.test(farm.schema_name))
+          throw new Error("Invalid farm schema");
+        await client.query("SELECT set_config('search_path',$1,true)", [
+          farm.schema_name,
+        ]);
+        await client.query(reproductionMigration);
+      }
+      await client.query("SELECT set_config('search_path','public',true)");
+      await client.query(
+        "INSERT INTO public.schema_migrations(version) VALUES(12)",
+      );
+    }
+    const penIcons = await client.query(
+      "SELECT 1 FROM public.schema_migrations WHERE version=13",
+    );
+    if (!penIcons.rowCount) {
+      const farms = await client.query<{ schema_name: string }>(
+        "SELECT schema_name FROM public.farms ORDER BY id",
+      );
+      for (const farm of farms.rows) {
+        if (!/^(public|farm_[a-f0-9]{32})$/.test(farm.schema_name))
+          throw new Error("Invalid farm schema");
+        await client.query("SELECT set_config('search_path',$1,true)", [
+          farm.schema_name,
+        ]);
+        await client.query(penIconsMigration);
+      }
+      await client.query("SELECT set_config('search_path','public',true)");
+      await client.query(
+        "INSERT INTO public.schema_migrations(version) VALUES(13)",
+      );
+    }
+    const penDeletion = await client.query(
+      "SELECT 1 FROM public.schema_migrations WHERE version=14",
+    );
+    if (!penDeletion.rowCount) {
+      const farms = await client.query<{ schema_name: string }>(
+        "SELECT schema_name FROM public.farms ORDER BY id",
+      );
+      for (const farm of farms.rows) {
+        if (!/^(public|farm_[a-f0-9]{32})$/.test(farm.schema_name))
+          throw new Error("Invalid farm schema");
+        await client.query("SELECT set_config('search_path',$1,true)", [
+          farm.schema_name,
+        ]);
+        await client.query(penDeletionMigration);
+      }
+      await client.query("SELECT set_config('search_path','public',true)");
+      await client.query(
+        "INSERT INTO public.schema_migrations(version) VALUES(14)",
       );
     }
   });

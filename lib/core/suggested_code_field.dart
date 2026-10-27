@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'api_client.dart';
+import 'ui_components.dart';
 
 class SuggestedCodeField extends StatefulWidget {
   final ApiClient api;
   final TextEditingController controller;
   final String kind, name, label;
   final bool enabled, requiredValue, suggestInitially;
+  final FormFieldValidator<String>? validator;
   const SuggestedCodeField({
     super.key,
     required this.api,
@@ -19,6 +21,7 @@ class SuggestedCodeField extends StatefulWidget {
     this.enabled = true,
     this.requiredValue = false,
     this.suggestInitially = true,
+    this.validator,
   });
   @override
   State<SuggestedCodeField> createState() => _SuggestedCodeFieldState();
@@ -100,10 +103,9 @@ class _SuggestedCodeFieldState extends State<SuggestedCodeField> {
     controller: widget.controller,
     enabled: widget.enabled,
     maxLength: 100,
-    decoration: InputDecoration(
-      labelText: widget.label,
+    decoration: farmInputDecoration(
+      label: widget.label,
       helperText: error ?? 'Mã đề xuất có thể sửa trước khi lưu.',
-      helperMaxLines: 4,
       suffixIcon: loading
           ? const Padding(
               padding: EdgeInsets.all(14),
@@ -121,8 +123,10 @@ class _SuggestedCodeFieldState extends State<SuggestedCodeField> {
               icon: const Icon(Icons.auto_fix_high_outlined),
             ),
     ),
-    validator: (v) => widget.requiredValue && (v == null || v.trim().isEmpty)
-        ? 'Nhập mã.'
-        : null,
+    validator:
+        widget.validator ??
+        (v) => widget.requiredValue && (v == null || v.trim().isEmpty)
+            ? 'Nhập mã.'
+            : null,
   );
 }

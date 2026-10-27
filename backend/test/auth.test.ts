@@ -67,6 +67,21 @@ before(
         CORS_ORIGINS: "http://localhost:8080",
       },
       false,
+      async () =>
+        Response.json({
+          current_units: {
+            temperature_2m: "°C",
+            relative_humidity_2m: "%",
+            wind_speed_10m: "m/s",
+          },
+          current: {
+            time: 1791187200,
+            temperature_2m: 29.8,
+            relative_humidity_2m: 80,
+            wind_speed_10m: 2.5,
+            weather_code: 63,
+          },
+        }),
     );
   },
   { timeout: 90000 },
@@ -672,7 +687,10 @@ test("owner registration creates isolated farms and scopes staff management", as
     ).statusCode,
     403,
   );
-  assert.equal((await call(tokenA, "GET", "/api/weather")).statusCode, 503);
+  const weather = await call(tokenA, "GET", "/api/weather");
+  assert.equal(weather.statusCode, 200);
+  assert.equal(weather.json().provider, "Open-Meteo");
+  assert.equal(weather.json().temperature, 29.8);
   const path = await pool.query("SHOW search_path");
   assert.equal(path.rows[0].search_path, '"$user", public');
 });

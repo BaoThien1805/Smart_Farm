@@ -67,16 +67,16 @@ void main() {
         find.widgetWithText(TextFormField, 'Nội dung'),
         'Mua thức ăn',
       );
-      await tap(t, find.widgetWithText(FilledButton, 'Lưu'));
+      await tap(t, find.widgetWithText(FilledButton, 'Lưu giao dịch'));
       expect(requests, isEmpty);
       expect(find.text('Nhập số nguyên VND.'), findsOneWidget);
       await t.enterText(
         find.widgetWithText(TextFormField, 'Số tiền (VND)'),
         '1000',
       );
-      await tap(t, find.widgetWithText(FilledButton, 'Lưu'));
+      await tap(t, find.widgetWithText(FilledButton, 'Lưu giao dịch'));
       expect(find.text('Thử lại cùng yêu cầu'), findsOneWidget);
-      await tap(t, find.widgetWithText(FilledButton, 'Lưu'));
+      await tap(t, find.widgetWithText(FilledButton, 'Lưu giao dịch'));
       expect(requests.length, 2);
       expect(requests[0], requests[1]);
       expect(requests[0]['amount'], 1000);
@@ -104,8 +104,14 @@ void main() {
                   'monthly': [
                     {
                       'month': '2026-10',
-                      'income': '9007199254740993123',
-                      'expense': '1000',
+                      'income':
+                          r.url.queryParameters['category'] == 'ANIMAL_SALE'
+                          ? '10000000'
+                          : '9007199254740993123',
+                      'expense':
+                          r.url.queryParameters['category'] == 'ANIMAL_SALE'
+                          ? '0'
+                          : '1000',
                     },
                   ],
                 })
@@ -136,10 +142,22 @@ void main() {
       expect(find.text('Hủy khoản'), findsNothing);
       expect(find.text('Liên kết giao dịch bán'), findsOneWidget);
       await tap(t, find.widgetWithText(ChoiceChip, 'Báo cáo'));
-      expect(find.text('9.007.199.254.740.993.123 ₫'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(FinanceTotals),
+          matching: find.text('9.007.199.254.740.993.123 ₫'),
+        ),
+        findsOneWidget,
+      );
       expect(find.text('Doanh thu bán vật nuôi'), findsOneWidget);
-      expect(find.text('10.000.000 ₫'), findsOneWidget);
-      expect(find.text('Chênh lệch thu chi'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(FinanceTotals),
+          matching: find.text('10.000.000 ₫'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Chênh lệch thu chi'), findsNWidgets(2));
       expect(find.byType(MonthlyFinanceChart), findsOneWidget);
       expect(t.takeException(), isNull);
       await t.pumpWidget(const SizedBox());
@@ -215,7 +233,7 @@ void main() {
         find.widgetWithText(TextFormField, 'Số tiền (VND)'),
         '10000000',
       );
-      await tap(t, find.widgetWithText(FilledButton, 'Lưu'));
+      await tap(t, find.widgetWithText(FilledButton, 'Xác nhận bán'));
       expect(find.text('Bán vật nuôi'), findsNothing);
       expect(find.text('Hủy bán'), findsOneWidget);
       expect(changed, greaterThanOrEqualTo(2));
@@ -229,7 +247,7 @@ void main() {
         find.widgetWithText(TextFormField, 'Lý do hủy bán'),
         'Nhập nhầm',
       );
-      await tap(t, find.widgetWithText(FilledButton, 'Lưu'));
+      await tap(t, find.widgetWithText(FilledButton, 'Xác nhận hủy'));
       expect(cancelBody!['penId'], animal['penId']);
       expect(cancelBody!['reason'], 'Nhập nhầm');
       expect(cancelBody!['requestId'], isNotEmpty);

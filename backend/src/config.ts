@@ -12,7 +12,10 @@ const configSchema = z.object({
     .refine((value) => /^postgres(ql)?:/.test(value)),
   CORS_ORIGINS: z.string().default("http://localhost:8080"),
   SESSION_HOURS: z.coerce.number().int().min(1).max(168).default(8),
-  WEATHER_API_KEY: z.string().trim().min(1).optional(),
+  WEATHER_API_KEY: z.preprocess(
+    (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+    z.string().trim().min(1).optional(),
+  ),
 });
 
 export function readConfig() {

@@ -8,6 +8,9 @@ android {
     namespace = "com.example.smart_farm"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
+    buildFeatures {
+        resValues = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -17,6 +20,7 @@ android {
     defaultConfig {
         // Keep the existing Smart Farm application identifier for Android installs.
         applicationId = "vn.edu.smartfarm.smart_farm"
+        resValue("string", "app_name", "Smart Farm")
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -27,6 +31,18 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+    }
+
+    flavorDimensions += "edition"
+    productFlavors {
+        create("standard") {
+            dimension = "edition"
+        }
+        create("preview") {
+            dimension = "edition"
+            applicationIdSuffix = ".preview"
+            resValue("string", "app_name", "Smart Farm Mới")
+        }
     }
 
     buildTypes {

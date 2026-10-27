@@ -7,17 +7,20 @@ import 'package:geolocator/geolocator.dart';
 import '../../core/api_client.dart';
 import '../../core/device_location.dart';
 import '../../core/theme.dart';
+import '../../core/ui_components.dart';
 import 'farm_repository.dart';
 
 class WeatherCard extends StatefulWidget {
   final FarmRepository repository;
   final bool admin;
   final bool compact;
+  final VoidCallback? onLocationChanged;
   const WeatherCard({
     super.key,
     required this.repository,
     required this.admin,
     this.compact = false,
+    this.onLocationChanged,
   });
   @override
   State<WeatherCard> createState() => _WeatherCardState();
@@ -63,12 +66,16 @@ class _WeatherCardState extends State<WeatherCard> {
       final location = response['location'] as Map<String, dynamic>? ?? {};
       final changed = await showDialog<bool>(
         context: context,
+        barrierDismissible: false,
         builder: (_) => FarmLocationDialog(
           repository: widget.repository,
           location: location,
         ),
       );
-      if (changed == true && mounted) await load();
+      if (changed == true && mounted) {
+        widget.onLocationChanged?.call();
+        await load();
+      }
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -97,6 +104,7 @@ class _WeatherCardState extends State<WeatherCard> {
             child: WeatherCard(
               repository: widget.repository,
               admin: widget.admin,
+              onLocationChanged: widget.onLocationChanged,
             ),
           ),
         ),
@@ -111,72 +119,112 @@ class _WeatherCardState extends State<WeatherCard> {
     if (mounted) await load();
   }
 
+  Widget compactLocationLabel(String label) => LayoutBuilder(
+    builder: (context, constraints) {
+      const style = TextStyle(fontSize: 12, color: muted);
+      final cityPrefix = RegExp(r'^Thành phố\s+', caseSensitive: false);
+      var display = label;
+      if (cityPrefix.hasMatch(label)) {
+        final city = label.replaceFirst(cityPrefix, '').trim();
+        final shortLabel = 'TP $city';
+        final painter = TextPainter(
+          text: TextSpan(
+            text: shortLabel,
+            style: DefaultTextStyle.of(context).style.merge(style),
+          ),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          maxLines: 1,
+        )..layout();
+        display = painter.width <= constraints.maxWidth
+            ? shortLabel
+            : 'Thành phố\n$city';
+        painter.dispose();
+      }
+      return Text(
+        display,
+        maxLines: 2,
+        softWrap: !cityPrefix.hasMatch(label),
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        style: style,
+      );
+    },
+  );
+
   @override
   Widget build(BuildContext context) {
+    final temperature = data?['temperature'];
+    final hasWeather = temperature is num && temperature.isFinite;
+    final region = data?['region']?.toString().trim();
+    final locationLabel = region?.isNotEmpty == true
+        ? region!
+        : errorCode == 'FARM_LOCATION_REQUIRED'
+        ? 'Chưa đặt vị trí'
+        : loading
+        ? 'Đang xác định'
+        : 'Chưa rõ vị trí';
+    final status = errorCode == 'WEATHER_NOT_CONFIGURED'
+        ? 'Chưa bật'
+        : errorCode == 'FARM_LOCATION_REQUIRED'
+        ? 'Chưa đặt vị trí'
+        : 'Chưa có dữ liệu';
     if (widget.compact) {
-      final temperature = data?['temperature'];
-      final text = loading
-          ? 'Đang tải'
-          : error != null
-          ? (errorCode == 'WEATHER_NOT_CONFIGURED'
-                ? 'Chưa bật'
-                : 'Chưa có dữ liệu')
-          : temperature is num
-          ? '${temperature.round()}°C'
-          : 'Thời tiết';
       return Tooltip(
-        message: error ?? 'Xem thời tiết và vị trí trang trại',
+        message: error ?? 'Xem thời tiết · $locationLabel',
         child: Material(
-          color: Colors.white,
+          color: FarmColors.sky,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(FarmRadii.field),
             side: const BorderSide(color: line),
           ),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: showDetails,
             child: Padding(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(8),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (loading)
-                        const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      else
-                        Icon(
-                          error != null
-                              ? Icons.cloud_off_outlined
-                              : conditionIcon,
-                          size: 22,
-                          color: forest,
-                        ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          text,
-                          style: TextStyle(
-                            fontSize: temperature is num && error == null
-                                ? 22
-                                : 12,
-                            fontWeight: FontWeight.w700,
-                            color: forest,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  if (loading)
+                    const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Icon(
+                      error != null
+                          ? Icons.cloud_off_outlined
+                          : hasWeather
+                          ? conditionIcon
+                          : Icons.cloud_outlined,
+                      size: 24,
+                      color: hasWeather && error == null
+                          ? (conditionIcon == Icons.wb_sunny_outlined
+                                ? FarmColors.gold
+                                : FarmColors.blue)
+                          : forest,
+                    ),
                   const SizedBox(height: 4),
-                  const Text(
-                    'Thời tiết',
-                    style: TextStyle(fontSize: 12, color: muted),
+                  Text(
+                    loading
+                        ? 'Đang tải'
+                        : error != null
+                        ? status
+                        : hasWeather
+                        ? '${temperature.round()}°C'
+                        : 'Chưa có dữ liệu',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: hasWeather && error == null && !loading
+                          ? 20
+                          : 12,
+                      fontWeight: FontWeight.w700,
+                      color: ink,
+                    ),
                   ),
+                  compactLocationLabel(locationLabel),
                 ],
               ),
             ),
@@ -187,31 +235,24 @@ class _WeatherCardState extends State<WeatherCard> {
     final observed = DateTime.tryParse(data?['observedAt']?.toString() ?? '')
         ?.toUtc()
         .add(const Duration(hours: 7));
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF0F6EE),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFD6E5D3)),
-      ),
+    return FarmInfoCard(
+      color: FarmColors.sky,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
-              const Icon(Icons.wb_cloudy_outlined, color: forest, size: 20),
-              const SizedBox(width: 8),
               const Expanded(
                 child: Text(
                   'Thời tiết trang trại',
-                  style: TextStyle(color: forest, fontWeight: FontWeight.w700),
+                  style: TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
               IconButton(
                 tooltip: 'Cập nhật thời tiết',
                 onPressed: loading ? null : load,
-                icon: const Icon(Icons.refresh, size: 20),
+                icon: const Icon(Icons.refresh),
               ),
             ],
           ),
@@ -220,60 +261,90 @@ class _WeatherCardState extends State<WeatherCard> {
               padding: EdgeInsets.symmetric(vertical: 20),
               child: LinearProgressIndicator(),
             )
-          else if (error != null)
-            Text(
+          else if (error != null) ...[
+            Icon(
+              errorCode == 'FARM_LOCATION_REQUIRED'
+                  ? Icons.location_off_outlined
+                  : Icons.cloud_off_outlined,
+              size: 40,
+              color: FarmColors.info,
+            ),
+            const SizedBox(height: 12),
+            FeedbackBox(
               errorCode == 'WEATHER_NOT_CONFIGURED'
                   ? 'Dịch vụ thời tiết chưa được bật trên máy chủ. Chủ trang trại cần cấu hình dịch vụ để xem thời tiết.'
                   : error!,
-              style: const TextStyle(color: forest),
-            )
-          else if (data?['temperature'] is num) ...[
-            Text(
-              data?['location']?.toString() ?? '',
-              style: const TextStyle(color: forest),
             ),
             const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: load,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Thử lại thời tiết'),
+            ),
+          ] else if (hasWeather) ...[
+            if (region?.isNotEmpty == true) ...[
+              Text(
+                region!,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+            ],
+            Text(
+              data?['location']?.toString() ?? '',
+              style: const TextStyle(color: muted),
+            ),
+            const SizedBox(height: 12),
             Row(
               children: [
-                Icon(conditionIcon, color: const Color(0xFFB87B20), size: 40),
-                const SizedBox(width: 12),
+                Icon(conditionIcon, size: 48, color: FarmColors.warning),
+                const SizedBox(width: 16),
                 Expanded(
                   child: Text(
-                    '${(data!['temperature'] as num).round()}°C',
-                    style: const TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w700,
-                      color: forest,
-                    ),
+                    '${temperature.round()}°C',
+                    style: Theme.of(context).textTheme.headlineLarge,
                   ),
                 ),
               ],
             ),
-            Text(
-              data?['description']?.toString() ?? '',
-              style: const TextStyle(color: forest),
-            ),
-            const SizedBox(height: 8),
+            Text(data?['description']?.toString() ?? ''),
+            const SizedBox(height: 12),
             Wrap(
-              spacing: 12,
-              runSpacing: 4,
+              spacing: 16,
+              runSpacing: 8,
               children: [
-                Text('Độ ẩm ${data?['humidity']}%'),
-                Text('Gió ${data?['windSpeed']} m/s'),
+                Text('Độ ẩm ${data?['humidity'] ?? '—'}%'),
+                Text('Gió ${data?['windSpeed'] ?? '—'} m/s'),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
-              'OpenWeather · ${observed == null ? "" : "${observed.hour.toString().padLeft(2, '0')}:${observed.minute.toString().padLeft(2, '0')} · Giờ Việt Nam"}',
-              style: const TextStyle(fontSize: 12, color: forest),
+              '${data?["provider"] ?? "Thời tiết"} · ${observed == null ? 'Chưa có giờ cập nhật' : '${observed.hour.toString().padLeft(2, '0')}:${observed.minute.toString().padLeft(2, '0')}'} · Giờ Việt Nam',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
-          ],
-          if (widget.admin)
+            if (data?['provider'] == 'Open-Meteo') ...[
+              const SizedBox(height: 4),
+              SelectableText(
+                'https://open-meteo.com/ · CC BY 4.0',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+            if (region?.isNotEmpty == true) ...[
+              const SizedBox(height: 4),
+              SelectableText(
+                'Địa danh: © OpenStreetMap contributors · Photon · ODbL',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ] else
+            const Text('Chưa có dữ liệu thời tiết.'),
+          if (widget.admin) ...[
+            const SizedBox(height: 12),
             TextButton.icon(
               onPressed: loading ? null : editLocation,
-              icon: const Icon(Icons.location_on_outlined, size: 18),
+              icon: const Icon(Icons.location_on_outlined),
               label: const Text('Đặt vị trí trang trại'),
             ),
+          ],
           if (!widget.admin && errorCode == 'FARM_LOCATION_REQUIRED')
             const Text('Chủ trang trại có thể đặt vị trí tại đây.'),
         ],
@@ -334,6 +405,7 @@ class _FarmLocationDialogState extends State<FarmLocationDialog> {
   }
 
   Future<void> locate() async {
+    if (busy) return;
     setState(() {
       busy = true;
       error = null;
@@ -390,7 +462,7 @@ class _FarmLocationDialogState extends State<FarmLocationDialog> {
   }
 
   Future<void> save() async {
-    if (!form.currentState!.validate()) return;
+    if (busy || !form.currentState!.validate()) return;
     setState(() {
       busy = true;
       error = null;
@@ -409,92 +481,90 @@ class _FarmLocationDialogState extends State<FarmLocationDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Vị trí trang trại'),
-    content: SizedBox(
-      width: 360,
-      child: SingleChildScrollView(
-        child: Form(
-          key: form,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Nếu bạn đang ở trang trại, dùng vị trí thiết bị. Nếu ở nơi khác, nhập tọa độ của trang trại từ bản đồ.',
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: busy ? null : locate,
-                icon: const Icon(Icons.my_location),
-                label: const Text('Lấy vị trí thiết bị'),
-              ),
-              const SizedBox(height: 12),
-              for (final entry in [
-                (latitude, 'Vĩ độ', 90.0),
-                (longitude, 'Kinh độ', 180.0),
-              ])
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: TextFormField(
-                    controller: entry.$1,
-                    enabled: !busy,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                      signed: true,
-                    ),
-                    decoration: InputDecoration(labelText: entry.$2),
-                    validator: (text) {
-                      final value = double.tryParse(
-                        (text?.trim() ?? '').replaceAll(',', '.'),
-                      );
-                      return value == null ||
-                              !value.isFinite ||
-                              value.abs() > entry.$3
-                          ? '${entry.$2} phải trong khoảng -${entry.$3.toInt()} đến ${entry.$3.toInt()}.'
-                          : null;
-                    },
+  Widget build(BuildContext context) => PopScope(
+    canPop: !busy,
+    child: FarmFormLayout(
+      title: 'Vị trí trang trại',
+      actions: [
+        TextButton(
+          onPressed: busy ? null : () => Navigator.pop(context),
+          child: const Text('Hủy'),
+        ),
+        FilledButton(
+          onPressed: busy ? null : save,
+          child: const Text('Lưu vị trí'),
+        ),
+      ],
+      child: Form(
+        key: form,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Nếu bạn đang ở trang trại, dùng vị trí thiết bị. Nếu ở nơi khác, nhập tọa độ của trang trại từ bản đồ.',
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: busy ? null : locate,
+              icon: const Icon(Icons.my_location),
+              label: const Text('Lấy vị trí thiết bị'),
+            ),
+            const SizedBox(height: 12),
+            for (final entry in [
+              (latitude, 'Vĩ độ', 90.0),
+              (longitude, 'Kinh độ', 180.0),
+            ])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: TextFormField(
+                  controller: entry.$1,
+                  enabled: !busy,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                    signed: true,
                   ),
+                  decoration: InputDecoration(labelText: entry.$2),
+                  validator: (text) {
+                    final value = double.tryParse(
+                      (text?.trim() ?? '').replaceAll(',', '.'),
+                    );
+                    return value == null ||
+                            !value.isFinite ||
+                            value.abs() > entry.$3
+                        ? '${entry.$2} phải trong khoảng -${entry.$3.toInt()} đến ${entry.$3.toInt()}.'
+                        : null;
+                  },
                 ),
-              if (locationInfo != null && error == null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(locationInfo!),
-                ),
-              if (locationFailed && !kIsWeb)
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    TextButton(
-                      onPressed: busy ? null : () => openSettings(false),
-                      child: const Text('Bật vị trí'),
-                    ),
-                    TextButton(
-                      onPressed: busy ? null : () => openSettings(true),
-                      child: const Text('Quyền ứng dụng'),
-                    ),
-                  ],
-                ),
-              if (busy) const LinearProgressIndicator(),
-              if (error != null)
-                Text(
-                  error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-            ],
-          ),
+              ),
+            if (locationInfo != null && error == null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(locationInfo!),
+              ),
+            if (locationFailed && !kIsWeb)
+              Wrap(
+                spacing: 8,
+                children: [
+                  TextButton(
+                    onPressed: busy ? null : () => openSettings(false),
+                    child: const Text('Bật vị trí'),
+                  ),
+                  TextButton(
+                    onPressed: busy ? null : () => openSettings(true),
+                    child: const Text('Quyền ứng dụng'),
+                  ),
+                ],
+              ),
+            if (busy) const LinearProgressIndicator(),
+            if (error != null)
+              Text(
+                error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+          ],
         ),
       ),
     ),
-    actions: [
-      TextButton(
-        onPressed: busy ? null : () => Navigator.pop(context),
-        child: const Text('Hủy'),
-      ),
-      FilledButton(
-        onPressed: busy ? null : save,
-        child: const Text('Lưu vị trí'),
-      ),
-    ],
   );
 }

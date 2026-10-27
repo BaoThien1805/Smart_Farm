@@ -1,7 +1,9 @@
 import { codeSchema } from "./codes.js";
 import { transaction } from "./database.js";
 import { registerFinanceRoutes } from "./finance/routes.js";
+import { registerReproductionRoutes } from "./reproduction/routes.js";
 import { WeatherService } from "./weather.js";
+import { WeatherRegionService } from "./weather-region.js";
 import { normalizeAnimalImage as normalizeAvatarImage } from "./farm/images.js";
 import { createFarmPool, withFarmScope } from "./database.js";
 import { registerFarmRoutes } from "./farm/routes.js";
@@ -29,7 +31,12 @@ declare module "fastify" {
   }
 }
 
-export async function buildApp(pool: Pool, config: Config, logger = true) {
+export async function buildApp(
+  pool: Pool,
+  config: Config,
+  logger = true,
+  weatherRequest: typeof fetch = fetch,
+) {
   const app = Fastify({
     logger: logger
       ? {
@@ -146,7 +153,8 @@ export async function buildApp(pool: Pool, config: Config, logger = true) {
   const care = allow(["ADMIN", "STAFF", "VET"]);
   const examine = allow(["ADMIN", "VET"]);
   const finance = allow(["ADMIN", "ACCOUNTANT"]);
-  const weather = new WeatherService(config.WEATHER_API_KEY);
+  const weather = new WeatherService(config.WEATHER_API_KEY, weatherRequest);
+  const weatherRegion = new WeatherRegionService(weatherRequest);
   app.get(
     "/api/farm/location",
     { preHandler: authenticate },
@@ -184,7 +192,11 @@ export async function buildApp(pool: Pool, config: Config, logger = true) {
         "FARM_LOCATION_REQUIRED",
         "Chưa đặt vị trí trang trại.",
       );
-    return weather.current(location);
+    const [data, region] = await Promise.all([
+      weather.current(location),
+      weatherRegion.current(location),
+    ]);
+    return { ...data, region };
   });
   app.get("/api/health", async () => {
     await pool.query("SELECT 1");
@@ -433,5 +445,10 @@ export async function buildApp(pool: Pool, config: Config, logger = true) {
     operate,
   });
   await registerFinanceRoutes(app, farmPool, { admin, finance });
+  await registerReproductionRoutes(app, farmPool, {
+    authenticate,
+    operate,
+    admin,
+  });
   return app;
 }

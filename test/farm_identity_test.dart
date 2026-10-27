@@ -206,7 +206,9 @@ void main() {
     await t.pumpAndSettle();
     expect(find.byType(UserAvatar), findsOneWidget);
     expect(find.text('Đổi ảnh đại diện'), findsNothing);
-    await t.tap(find.text('Chỉnh sửa'));
+    await t.tap(find.byKey(const ValueKey('personnel-menu-staff')));
+    await t.pumpAndSettle();
+    await t.tap(find.widgetWithText(PopupMenuItem<String>, 'Chỉnh sửa'));
     await t.pumpAndSettle();
     final remove = find.text('Bỏ ảnh');
     await t.ensureVisible(remove);

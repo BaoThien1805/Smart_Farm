@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme.dart';
 import 'farm_repository.dart';
-import 'finance_page.dart';
+import 'finance_values.dart';
+import '../../core/ui_components.dart';
 
-const revenueBlue = Color(0xFF315FA0);
-const revenueAmber = Color(0xFF986019);
+const revenueBlue = FarmColors.info;
+const revenueAmber = FarmColors.warning;
 
 String revenueMonth(String month) => month.split('-').reversed.join('/');
 
@@ -103,6 +104,11 @@ class _RevenueChartState extends State<RevenueChart> {
           ],
         ),
         const SizedBox(height: 24),
+        const Text(
+          'Doanh thu bán nằm trong Tổng thu. Chỉ tính khoản hợp lệ.',
+          style: TextStyle(color: muted),
+        ),
+        const SizedBox(height: 16),
         if (maximum == 0)
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
@@ -112,96 +118,125 @@ class _RevenueChartState extends State<RevenueChart> {
           ),
         Semantics(
           label:
-              'Biểu đồ cột $label theo tháng, đơn vị đồng. Tổng ${vnd(total)}. Chi tiết nằm ở các nút tháng và bảng bên dưới.',
+              'Biểu đồ cột $label theo tháng, đơn vị đồng. Tổng ${vnd(total)}. Chi tiết ở các nút tháng và bảng bên dưới.',
           child: SizedBox(
-            height: 224,
+            height: 220,
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
-                  width: 76,
-                  height: 196,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        maximum == 0 ? 'VND' : compactRevenue(ceiling),
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      Text(
-                        maximum == 0 ? '' : compactRevenue(ceiling / 2),
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      const Text('0', style: TextStyle(fontSize: 12)),
-                    ],
+                  width: 68,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 40),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          maximum == 0 ? 'VND' : compactRevenue(ceiling),
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        Text(
+                          maximum == 0 ? '' : compactRevenue(ceiling / 2),
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        const Text('0', style: TextStyle(fontSize: 12)),
+                      ],
+                    ),
                   ),
                 ),
                 Expanded(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        bottom: 28,
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: List.generate(
-                            3,
-                            (_) => const Divider(height: 1, color: line),
-                          ),
-                        ),
-                      ),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          for (var i = 0; i < months.length; i++)
-                            Expanded(
-                              child: Tooltip(
-                                message:
-                                    '${revenueMonth(months[i].text('month'))}: ${vnd(months[i].values[metric])}',
+                  child: LayoutBuilder(
+                    builder: (context, c) {
+                      final minWidth = months.length * 52.0;
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                          width: c.maxWidth > minWidth ? c.maxWidth : minWidth,
+                          child: Stack(
+                            children: [
+                              Positioned.fill(
+                                bottom: 40,
                                 child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    Expanded(
-                                      child: Align(
-                                        alignment: Alignment.bottomCenter,
-                                        child: FractionallySizedBox(
-                                          widthFactor: .5,
-                                          child: Container(
-                                            key: ValueKey(
-                                              'revenue-bar-${months[i].text('month')}',
-                                            ),
-                                            height: amounts[i] / ceiling * 192,
-                                            decoration: BoxDecoration(
-                                              color: color.withValues(
-                                                alpha: months[i] == selected
-                                                    ? 1
-                                                    : .55,
-                                              ),
-                                              borderRadius:
-                                                  const BorderRadius.vertical(
-                                                    top: Radius.circular(6),
-                                                  ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      height: 28,
-                                      child: Center(
-                                        child: Text(
-                                          'T${months[i].text('month').split('-').last}',
-                                          style: const TextStyle(fontSize: 12),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: List.generate(
+                                    3,
+                                    (_) =>
+                                        const Divider(height: 1, color: line),
+                                  ),
                                 ),
                               ),
-                            ),
-                        ],
-                      ),
-                    ],
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  for (var i = 0; i < months.length; i++)
+                                    Expanded(
+                                      child: Tooltip(
+                                        message:
+                                            '${revenueMonth(months[i].text('month'))}: ${vnd(months[i].values[metric])}',
+                                        child: Column(
+                                          children: [
+                                            Expanded(
+                                              child: Align(
+                                                alignment:
+                                                    Alignment.bottomCenter,
+                                                child: SizedBox(
+                                                  width: 32,
+                                                  child: Container(
+                                                    key: ValueKey(
+                                                      'revenue-bar-${months[i].text('month')}',
+                                                    ),
+                                                    height:
+                                                        amounts[i] /
+                                                        ceiling *
+                                                        200,
+                                                    decoration: BoxDecoration(
+                                                      gradient: LinearGradient(
+                                                        begin:
+                                                            Alignment.topCenter,
+                                                        end: Alignment
+                                                            .bottomCenter,
+                                                        colors: [
+                                                          color.withValues(
+                                                            alpha: .6,
+                                                          ),
+                                                          color,
+                                                        ],
+                                                      ),
+                                                      borderRadius:
+                                                          const BorderRadius.vertical(
+                                                            top:
+                                                                Radius.circular(
+                                                                  8,
+                                                                ),
+                                                          ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            SizedBox(
+                                              height: 40,
+                                              child: Center(
+                                                child: Text(
+                                                  'T${months[i].text('month').split('-').last}',
+                                                  style: const TextStyle(
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -252,6 +287,119 @@ class _RevenueChartState extends State<RevenueChart> {
       ],
     );
   }
+}
+
+class FinanceTotals extends StatelessWidget {
+  const FinanceTotals({super.key, required this.summary});
+  final Map<String, dynamic> summary;
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      DashboardFinanceCards(summary: summary),
+      const SizedBox(height: 12),
+      const Text(
+        'Doanh thu bán đã nằm trong Tổng thu. Chênh lệch thu chi chưa phải lợi nhuận kế toán. Khoản đã hủy không được tính vào báo cáo.',
+        style: TextStyle(color: muted),
+      ),
+    ],
+  );
+}
+
+class MonthlyFinanceChart extends StatelessWidget {
+  const MonthlyFinanceChart({super.key, required this.monthly});
+  final List<FarmRecord> monthly;
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      FarmInfoCard(child: RevenueChart(monthly: monthly)),
+      const SizedBox(height: 24),
+      const FarmSectionHeader(
+        title: 'Chi tiết theo tháng',
+        subtitle: 'Số tiền chính xác · VND · Chỉ tính khoản hợp lệ',
+      ),
+      const SizedBox(height: 16),
+      for (final m in monthly.reversed) ...[
+        FarmInfoCard(
+          key: ValueKey('report-month-${m.text('month')}'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Tháng ${revenueMonth(m.text('month'))}',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 16),
+              LayoutBuilder(
+                builder: (context, c) {
+                  final columns = c.maxWidth >= 900
+                      ? 3
+                      : c.maxWidth >= 600
+                      ? 2
+                      : 1;
+                  return Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      for (final e in const {
+                        'income': ('Tổng thu', FarmColors.mint, forest),
+                        'expense': ('Tổng chi', FarmColors.peach, revenueAmber),
+                        'difference': (
+                          'Chênh lệch thu chi',
+                          FarmColors.lavender,
+                          FarmColors.purple,
+                        ),
+                      }.entries)
+                        SizedBox(
+                          width: (c.maxWidth - (columns - 1) * 12) / columns,
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: e.value.$2,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(e.value.$1),
+                                const SizedBox(height: 8),
+                                Text(
+                                  vnd(m.values[e.key]),
+                                  style: TextStyle(
+                                    color: e.value.$3,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Doanh thu bán: ${vnd(m.values['salesRevenue'])}',
+                style: const TextStyle(
+                  color: forest,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Doanh thu bán nằm trong Tổng thu.',
+                style: TextStyle(color: muted),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
+    ],
+  );
 }
 
 class DashboardFinanceCards extends StatelessWidget {

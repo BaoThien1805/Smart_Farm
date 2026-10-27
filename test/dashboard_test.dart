@@ -79,7 +79,9 @@ void main() {
       expect(find.text('Tổng quan trang trại'), findsNothing);
       expect(find.text('Chào Chủ trang trại'), findsOneWidget);
       expect(find.byType(RevenueChart), findsNothing);
-      expect(find.text('Lịch chăm sóc'), findsWidgets);
+      expect(find.byKey(const ValueKey('dashboard-due')), findsOneWidget);
+      expect(find.text('3 việc chăm sóc quá hạn'), findsNothing);
+      expect(find.text('Mở lịch để kiểm tra và xử lý.'), findsNothing);
       await t.ensureVisible(find.widgetWithText(ChoiceChip, 'Cảnh báo'));
       await t.tap(find.widgetWithText(ChoiceChip, 'Cảnh báo'));
       await t.pumpAndSettle();

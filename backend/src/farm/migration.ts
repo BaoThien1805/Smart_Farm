@@ -1,3 +1,8 @@
+export const penDeletionMigration = `
+ALTER TABLE pens ADD COLUMN deleted_at timestamptz;
+ALTER TABLE pens ADD CONSTRAINT pens_deleted_inactive_check CHECK(deleted_at IS NULL OR NOT active);
+`;
+
 export const farmMigration = `
 CREATE TABLE species(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL UNIQUE);
 CREATE TABLE breeds(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, species_id uuid NOT NULL REFERENCES species(id), UNIQUE(species_id,name));

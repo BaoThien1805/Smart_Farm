@@ -86,10 +86,11 @@ void main() {
       await t.pumpAndSettle();
       expect(
         find.text(
-          'Loài này chưa có giống. ADMIN cần tạo giống trước khi thêm vật nuôi.',
+          'Loài này chưa có giống. Chủ trang trại cần tạo giống trước khi thêm vật nuôi.',
         ),
         findsOneWidget,
       );
+      await t.ensureVisible(find.text('Thêm giống cho loài này'));
       await t.tap(find.text('Thêm giống cho loài này'));
       await t.pumpAndSettle();
       await t.enterText(
@@ -99,6 +100,9 @@ void main() {
       await t.tap(find.widgetWithText(FilledButton, 'Lưu').last);
       await t.pumpAndSettle();
       expect(requests, 2);
+      await t.ensureVisible(
+        find.widgetWithText(DropdownButtonFormField<String>, 'Giống'),
+      );
       await t.tap(
         find.widgetWithText(DropdownButtonFormField<String>, 'Giống'),
       );
@@ -153,8 +157,8 @@ void main() {
         ),
       );
       await t.pumpAndSettle();
-      expect(find.text('Bò'), findsNothing);
-      await t.tap(find.text('Vào trang trại làm việc'));
+      expect(find.text('Bò'), findsOneWidget);
+      await t.tap(find.text('Chọn theo nhóm'));
       await t.pumpAndSettle();
       expect(find.text('Gia súc'), findsOneWidget);
       await t.tap(find.text('Bò'));
@@ -235,8 +239,8 @@ void main() {
         find.widgetWithText(TextFormField, 'Tên thức ăn'),
         'Cỏ',
       );
-      await t.ensureVisible(find.widgetWithText(FilledButton, 'Lưu'));
-      await t.tap(find.widgetWithText(FilledButton, 'Lưu'));
+      await t.ensureVisible(find.widgetWithText(FilledButton, 'Lưu thức ăn'));
+      await t.tap(find.widgetWithText(FilledButton, 'Lưu thức ăn'));
       await t.pumpAndSettle();
       expect(created!['lowStock'], 0);
       expect(t.takeException(), isNull);

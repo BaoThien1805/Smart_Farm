@@ -15,6 +15,48 @@ export default class LocalPostgres extends EmbeddedPostgres {
       throw new Error("Explicit databaseDir is required.");
     this.databaseDirectory = path.resolve(options.databaseDir);
   }
+  override async start(): Promise<void> {
+    if (process.platform !== "win32") return super.start();
+    // pg_ctl starts PostgreSQL with the restricted token required on Windows,
+    // including when the parent editor happens to run as Administrator.
+    const { pg_ctl } = await import("@embedded-postgres/windows-x64");
+    await execute(
+      pg_ctl,
+      [
+        "-D",
+        this.databaseDirectory,
+        "-l",
+        path.join(this.databaseDirectory, "server.log"),
+        "-o",
+        `-p ${this.options.port} -h 127.0.0.1`,
+        "start",
+        "-w",
+        "-t",
+        "20",
+      ],
+      { windowsHide: true, timeout: 25000 },
+    );
+  }
+  override async createDatabase(name: string): Promise<void> {
+    if (process.platform !== "win32") return super.createDatabase(name);
+    const client = this.getPgClient(undefined, "127.0.0.1");
+    try {
+      await client.connect();
+      await client.query(`CREATE DATABASE ${client.escapeIdentifier(name)}`);
+    } finally {
+      await client.end();
+    }
+  }
+  override async dropDatabase(name: string): Promise<void> {
+    if (process.platform !== "win32") return super.dropDatabase(name);
+    const client = this.getPgClient(undefined, "127.0.0.1");
+    try {
+      await client.connect();
+      await client.query(`DROP DATABASE ${client.escapeIdentifier(name)}`);
+    } finally {
+      await client.end();
+    }
+  }
   override async stop(): Promise<void> {
     if (process.platform !== "win32") {
       await super.stop();

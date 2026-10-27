@@ -1,0 +1,28 @@
+{
+  "tool": "Built-in image_gen (no CLI)",
+  "date": "2026-10-24",
+  "styleReference": "Cow is the style reference for the other four assets; boards were visually inspected, never cropped into assets.",
+  "processing": "Downscale PNGs only; preserve transparent alpha. Originals remain in Codex generated_images.",
+  "prompts": [
+    {
+      "name": "cow",
+      "prompt": "Use case: illustration-story. Asset type: production transparent PNG animal sticker for Smart Farm Flutter app, readable at 48–96px. Primary request: ONE cute friendly dairy cow, whole body standing, slight three-quarter front pose, centered square composition, equal generous transparent padding around ears horns feet and tail. Style: polished flat hand-drawn sticker illustration, consistent thick rounded dark cocoa #3A261C outline, cream body, dark brown patches, small warm peach muzzle, tiny black dot eyes, modest happy expression, soft pastel fills with minimal shading, subtle cream-white sticker rim. No texture, no shadows outside subject, no grass, no scenery, no text, no badges, no letters, no UI. Actual transparent background. Animal fills about 80 percent square canvas, clean simple silhouette designed as first animal in a matching cow/pig/goat/chicken set. Match the warm friendly sticker direction of the farm concept references without including any screen or card."
+    },
+    {
+      "name": "pig",
+      "prompt": "Use case: illustration-story. Create a NEW production PNG asset for Smart Farm Flutter app. Input image is STYLE REFERENCE ONLY: match its rounded thick cocoa outlines, subtle cream-white sticker edge, friendly dot eyes, pastel color fills, simplified proportions and gentle shading. No text, no watermarks, no UI, no labels. ONE cute pastel peach-pink pig, whole body standing, slight three-quarter front pose facing left, small happy face and round snout, four short legs and curly tail. Centered square, animal fills about 80 percent canvas, padding on all sides. True transparent background, no scenery, no grass, no external shadow. Same stroke weight and perceived animal size as reference cow; recognizable at 48px."
+    },
+    {
+      "name": "goat",
+      "prompt": "Use case: illustration-story. Create a NEW production PNG asset for Smart Farm Flutter app. Input image is STYLE REFERENCE ONLY: match its rounded thick cocoa outlines, subtle cream-white sticker edge, friendly dot eyes, pastel color fills, simplified proportions and gentle shading. No text, no watermarks, no UI, no labels. ONE cute cream-white goat, whole body standing, slight three-quarter front pose facing left, small happy face, small beard and two tan gently curved horns, four short legs and little tail. Centered square, animal fills about 80 percent canvas, padding on all sides. True transparent background, no scenery, no grass, no external shadow. Same stroke weight and perceived animal size as reference cow; recognizable at 48px."
+    },
+    {
+      "name": "chicken",
+      "prompt": "Use case: illustration-story. Create a NEW production PNG asset for Smart Farm Flutter app. Input image is STYLE REFERENCE ONLY: match its rounded thick cocoa outlines, subtle cream-white sticker edge, friendly dot eyes, pastel color fills, simplified proportions and gentle shading. No text, no watermarks, no UI, no labels. ONE cute cream-white hen, whole body standing, slight three-quarter front pose facing left, small happy face, warm coral comb and wattle, amber beak and two feet, rounded wing and short tail. Centered square, animal fills about 80 percent canvas, padding on all sides. True transparent background, no scenery, no grass, no external shadow. Same stroke weight and perceived animal size as reference cow; recognizable at 48px."
+    },
+    {
+      "name": "banner",
+      "prompt": "Use case: illustration-story. Create a NEW production PNG asset for Smart Farm Flutter app. Input image is STYLE REFERENCE ONLY: match its rounded thick cocoa outlines, subtle cream-white sticker edge, friendly dot eyes, pastel color fills, simplified proportions and gentle shading. No text, no watermarks, no UI, no labels. A wide landscape farm welcome banner, approximately 3:1 aspect ratio, a self-contained illustration only. Coral red barn with cream trim, simple wooden cream fence, rounded mint green hills, a few leafy trees, sky blue cloud shapes and a small warm sun; friendly cow, pig, goat and chicken together in the meadow. Use same warm illustrated family as the cow reference, clean cocoa outlines with soft pastel fills. All elements fully inside the canvas. Warm cream #FFF9F0 background, minimal open sky above, no text or buttons, no device frame, no card, no status or weather indicators. Art intended for a noninteractive decorative app hero; no data baked into it."
+    }
+  ]
+}

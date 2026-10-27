@@ -9,10 +9,13 @@ import 'package:smart_farm/core/theme.dart';
 import 'package:smart_farm/features/farm/farm_repository.dart';
 import 'package:smart_farm/features/farm/weather_card.dart';
 
+import 'support/ui_preview.dart' show loadUiPreviewFonts;
+
 void main() {
   testWidgets(
     'compact weather opens complete details and owner location controls',
     (t) async {
+      await loadUiPreviewFonts();
       final api = ApiClient(
         client: MockClient(
           (_) async => http.Response(
@@ -23,6 +26,7 @@ void main() {
               'windSpeed': 2,
               'description': 'trời quang',
               'location': 'Trang trại',
+              'region': 'Thành phố Hồ Chí Minh',
             }),
             200,
             headers: {'content-type': 'application/json; charset=utf-8'},
@@ -37,7 +41,7 @@ void main() {
             body: Align(
               alignment: Alignment.topRight,
               child: SizedBox(
-                width: 130,
+                width: 112,
                 child: WeatherCard(
                   repository: FarmRepository(api),
                   admin: true,
@@ -51,13 +55,19 @@ void main() {
       await t.pumpAndSettle();
       expect(find.text('28°C'), findsOneWidget);
       expect(find.text('Đặt vị trí trang trại'), findsNothing);
-      await t.tap(find.text('Thời tiết'));
+      expect(find.text('TP Hồ Chí Minh'), findsOneWidget);
+      expect(find.text('Thời tiết'), findsNothing);
+      await t.tap(find.text('TP Hồ Chí Minh'));
       await t.pumpAndSettle();
       expect(find.text('Độ ẩm 70%'), findsOneWidget);
       expect(find.text('Đặt vị trí trang trại'), findsOneWidget);
       await t.tap(find.text('Đóng'));
       await t.pumpAndSettle();
       expect(find.text('Độ ẩm 70%'), findsNothing);
+      t.platformDispatcher.textScaleFactorTestValue = 1.5;
+      addTearDown(t.platformDispatcher.clearTextScaleFactorTestValue);
+      await t.pumpAndSettle();
+      expect(find.text('Thành phố\nHồ Chí Minh'), findsOneWidget);
       expect(t.takeException(), isNull);
     },
   );
@@ -114,6 +124,7 @@ void main() {
               'condition': 500,
               'description': 'mưa nhẹ',
               'observedAt': '2026-10-05T03:00:00Z',
+              'provider': 'Open-Meteo',
             }),
             200,
             headers: {'content-type': 'application/json; charset=utf-8'},
@@ -141,6 +152,9 @@ void main() {
       expect(find.text('30°C'), findsOneWidget);
       expect(find.text('mưa nhẹ'), findsOneWidget);
       expect(find.text('Độ ẩm 80%'), findsOneWidget);
+      expect(find.textContaining('Open-Meteo · 10:00'), findsOneWidget);
+      expect(find.text('https://open-meteo.com/ · CC BY 4.0'), findsOneWidget);
+      expect(find.textContaining('OpenWeather'), findsNothing);
       expect(t.takeException(), isNull);
     },
   );

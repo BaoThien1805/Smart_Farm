@@ -215,51 +215,105 @@ export async function registerFinanceRoutes(
     );
     return { sales: rows.rows, total: total.rows[0].total, ...q };
   });
+  const saleBody = z
+    .object({
+      requestId: uuid,
+      date,
+      amount,
+      buyer: z.string().trim().max(200).default(""),
+      notes,
+    })
+    .strict();
+  async function sellOne(
+    c: PoolClient,
+    id: string,
+    b: z.infer<typeof saleBody>,
+    actorId: string,
+  ) {
+    const a = await animal(c, id);
+    actualDate(b.date, a.arrival_date);
+    const latest = await c.query(
+      `SELECT max(date)::text AS date FROM (SELECT date FROM weights WHERE animal_id=$1 UNION ALL SELECT date FROM transfers WHERE animal_id=$1 UNION ALL SELECT date FROM health_records WHERE animal_id=$1 UNION ALL SELECT date FROM reproduction_events WHERE mother_id=$1 AND kind IN ('LIVE_BIRTH','EGG_COLLECTION') UNION ALL SELECT restore_date FROM sales WHERE animal_id=$1 AND cancelled_at IS NOT NULL) events`,
+      [id],
+    );
+    if (latest.rows[0].date && b.date < latest.rows[0].date)
+      conflict("Ngày bán không thể trước lịch sử đã ghi.");
+    const sale = (
+      await c.query(
+        "INSERT INTO sales(animal_id,date,amount,buyer,notes,actor_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING id",
+        [id, b.date, b.amount, b.buyer, b.notes, actorId],
+      )
+    ).rows[0];
+    const entry = (
+      await c.query(
+        "INSERT INTO finance_entries(date,kind,category,amount,content,sale_id,actor_id) VALUES($1,'IN','ANIMAL_SALE',$2,$3,$4,$5) RETURNING id",
+        [b.date, b.amount, `Bán vật nuôi ${a.code}`, sale.id, actorId],
+      )
+    ).rows[0];
+    await audit(c, entry.id, "CREATE", actorId, "Bán vật nuôi");
+    await c.query(
+      "UPDATE animals SET status='SOLD',ended_date=$2 WHERE id=$1",
+      [id, b.date],
+    );
+    await c.query(
+      "UPDATE care_tasks SET status='CANCELLED' WHERE animal_id=$1 AND status='PENDING'",
+      [id],
+    );
+    return { sale, entry };
+  }
   app.post("/api/animals/:id/sell", admin, async (r) => {
-    const b = z
-      .object({
-        requestId: uuid,
-        date,
-        amount,
-        buyer: z.string().trim().max(200).default(""),
-        notes,
-      })
-      .strict()
-      .parse(r.body);
-    return write(r, b, b.requestId, async (c) => {
-      const id = idOf(r),
-        a = await animal(c, id);
-      actualDate(b.date, a.arrival_date);
-      const latest = await c.query(
-        `SELECT max(date)::text AS date FROM (SELECT date FROM weights WHERE animal_id=$1 UNION ALL SELECT date FROM transfers WHERE animal_id=$1 UNION ALL SELECT date FROM health_records WHERE animal_id=$1 UNION ALL SELECT restore_date FROM sales WHERE animal_id=$1 AND cancelled_at IS NOT NULL) events`,
-        [id],
-      );
-      if (latest.rows[0].date && b.date < latest.rows[0].date)
-        conflict("Ngày bán không thể trước lịch sử đã ghi.");
-      const sale = (
-        await c.query(
-          "INSERT INTO sales(animal_id,date,amount,buyer,notes,actor_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING id",
-          [id, b.date, b.amount, b.buyer, b.notes, r.account!.id],
-        )
-      ).rows[0];
-      const entry = (
-        await c.query(
-          "INSERT INTO finance_entries(date,kind,category,amount,content,sale_id,actor_id) VALUES($1,'IN','ANIMAL_SALE',$2,$3,$4,$5) RETURNING id",
-          [b.date, b.amount, `Bán vật nuôi ${a.code}`, sale.id, r.account!.id],
-        )
-      ).rows[0];
-      await audit(c, entry.id, "CREATE", r.account!.id, "Bán vật nuôi");
-      await c.query(
-        "UPDATE animals SET status='SOLD',ended_date=$2 WHERE id=$1",
-        [id, b.date],
-      );
-      await c.query(
-        "UPDATE care_tasks SET status='CANCELLED' WHERE animal_id=$1 AND status='PENDING'",
-        [id],
-      );
-      return { sale, entry };
-    });
+    const b = saleBody.parse(r.body);
+    return write(r, b, b.requestId, (c) =>
+      sellOne(c, idOf(r), b, r.account!.id),
+    );
   });
+  app.post(
+    "/api/animals/batch/sell",
+    { ...admin, bodyLimit: 131072 },
+    async (r) => {
+      const b = saleBody
+        .omit({ amount: true })
+        .extend({
+          items: z
+            .array(z.object({ animalId: uuid, amount }).strict())
+            .min(1)
+            .max(1000)
+            .refine(
+              (items) =>
+                new Set(items.map((item) => item.animalId)).size ===
+                items.length,
+              "Không chọn trùng vật nuôi.",
+            )
+            .transform((items) =>
+              items.sort((a, b) => a.animalId.localeCompare(b.animalId)),
+            ),
+        })
+        .parse(r.body);
+      return write(r, b, b.requestId, async (c) => {
+        const results = [];
+        for (const item of b.items) {
+          const result = await sellOne(
+            c,
+            item.animalId,
+            { ...b, amount: item.amount },
+            r.account!.id,
+          );
+          results.push({
+            animalId: item.animalId,
+            saleId: result.sale.id,
+            entryId: result.entry.id,
+          });
+        }
+        return {
+          count: results.length,
+          sales: results,
+          totalAmount: b.items
+            .reduce((sum, item) => sum + item.amount, 0)
+            .toString(),
+        };
+      });
+    },
+  );
   app.post("/api/sales/:id/cancel", admin, async (r) => {
     const b = z
       .object({ requestId: uuid, reason, penId: uuid, date })

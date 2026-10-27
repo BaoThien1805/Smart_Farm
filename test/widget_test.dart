@@ -96,7 +96,7 @@ void main() {
       final auth = AuthController(AuthRepository(client, store));
       await tester.pumpWidget(SmartFarmApp(controller: auth));
       await tester.pumpAndSettle();
-      final signup = find.text('Chưa có tài khoản? Đăng ký chủ trang trại');
+      final signup = find.text('Đăng ký chủ trang trại');
       await tester.ensureVisible(signup);
       await tester.tap(signup);
       await tester.pumpAndSettle();
@@ -123,7 +123,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(calls, 1);
       expect(store.token, 'owner-token');
-      expect(find.text('Quản lý trang trại của tôi'), findsOneWidget);
+      expect(find.text('Chọn loài nuôi'), findsOneWidget);
       expect(find.text('Chọn vật nuôi trong trang trại'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
@@ -216,7 +216,12 @@ void main() {
       expect(find.text('Thêm vật nuôi'), findsOneWidget);
       expect(find.text('Nhân sự'), findsNothing);
       expect(store.token, 'test-token');
-      await tester.tap(find.text('Tài khoản'));
+      await tester.tap(find.byKey(const ValueKey('tab-more')));
+      await tester.pumpAndSettle();
+      expect(find.text('Nhân sự'), findsNothing);
+      final profileLink = find.byKey(const ValueKey('more-profile'));
+      await tester.ensureVisible(profileLink);
+      await tester.tap(profileLink);
       await tester.pumpAndSettle();
       await enterWorkspace(tester);
       await tester.ensureVisible(
@@ -225,7 +230,7 @@ void main() {
       await tester.tap(find.widgetWithText(OutlinedButton, 'Đăng xuất'));
       await tester.pumpAndSettle();
       await enterWorkspace(tester);
-      expect(find.text('Đăng nhập\ntrang trại của bạn.'), findsOneWidget);
+      expect(find.text('Smart Farm'), findsOneWidget);
       expect(store.token, isNull);
       await tester.pumpWidget(const SizedBox());
       auth.dispose();
@@ -243,6 +248,9 @@ void main() {
       final store = MemoryStore()..token = 'test-token';
       final client = ApiClient(
         client: MockClient((request) async {
+          if (request.url.path.endsWith('/species-settings')) {
+            return testResponse(jsonEncode({'configured': true}), 200);
+          }
           if (request.url.path.endsWith('/users')) {
             return testResponse(
               jsonEncode({
@@ -357,6 +365,11 @@ void main() {
     );
     await tester.pumpAndSettle();
     await enterWorkspace(tester);
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('personnel-menu-staff-id')),
+    );
+    await tester.tap(find.byKey(const ValueKey('personnel-menu-staff-id')));
+    await tester.pumpAndSettle();
     expect(find.text('Xóa'), findsOneWidget);
     await tester.ensureVisible(find.text('Xóa'));
     await tester.tap(find.text('Xóa'));
@@ -367,6 +380,8 @@ void main() {
     await tester.pumpAndSettle();
     await enterWorkspace(tester);
     expect(removed, isFalse);
+    await tester.tap(find.byKey(const ValueKey('personnel-menu-staff-id')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Xóa'));
     await tester.pumpAndSettle();
     await enterWorkspace(tester);
@@ -444,6 +459,9 @@ void main() {
     bool deleted = false;
     final client = ApiClient(
       client: MockClient((request) async {
+        if (request.url.path.endsWith('/species-settings')) {
+          return testResponse(jsonEncode({'configured': true}), 200);
+        }
         if (request.method == 'DELETE' &&
             request.url.path.contains('/users/')) {
           deleted = true;
@@ -470,7 +488,9 @@ void main() {
     await tester.pumpAndSettle();
     await enterWorkspace(tester);
     expect(find.text('2 tài khoản'), findsOneWidget);
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Xóa'));
+    await tester.tap(find.byKey(const ValueKey('personnel-menu-staff-id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, 'Xóa'));
     await tester.pumpAndSettle();
     await enterWorkspace(tester);
     expect(find.textContaining('Xóa tài khoản'), findsAtLeast(1));

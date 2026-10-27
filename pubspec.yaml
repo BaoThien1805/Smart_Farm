@@ -38,6 +38,10 @@ dependencies:
   flutter_secure_storage: ^11.2.0
   file_selector: ^1.1.0
   geolocator: ^14.1.1
+  mobile_scanner: ^7.4.2
+  qr_flutter: ^4.1.0
+  printing: ^5.15.1
+  pdf: ^3.13.1
 
 dev_dependencies:
   flutter_test:
@@ -56,11 +60,44 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+  default-flavor: standard
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/fonts/nunito_license.txt
+    - assets/fonts/roboto_license.txt
+    - assets/illustrations/cow.png
+    - assets/illustrations/pig.png
+    - assets/illustrations/goat.png
+    - assets/illustrations/chicken.png
+    - assets/illustrations/buffalo.png
+    - assets/illustrations/sheep.png
+    - assets/illustrations/duck.png
+    - assets/illustrations/muscovy.png
+    - assets/illustrations/goose.png
+    - assets/illustrations/fish.png
+    - assets/illustrations/shrimp.png
+    - assets/illustrations/rabbit.png
+    - assets/illustrations/farm-banner.png
+    - assets/illustrations/barn.png
+
+  fonts:
+    - family: FarmRound
+      fonts:
+        - asset: assets/fonts/nunito-extra-bold.ttf
+          weight: 800
+    - family: FarmRoboto
+      fonts:
+        - asset: assets/fonts/roboto-regular.ttf
+          weight: 400
+        - asset: assets/fonts/roboto-medium.ttf
+          weight: 500
+        - asset: assets/fonts/roboto-bold.ttf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   # assets:

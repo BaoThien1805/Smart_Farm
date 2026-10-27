@@ -114,7 +114,7 @@ void main() {
         find.widgetWithText(TextFormField, 'Hướng dẫn điều trị'),
         'Tái khám',
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Lưu'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Lưu kết quả khám'));
       await tester.pumpAndSettle();
       expect(body!['diagnosis'], 'Viêm da');
       expect(body!['treatment'], 'Tái khám');
@@ -181,7 +181,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byType(SalesHistory), findsOneWidget);
+      expect(find.byType(SalesHistory, skipOffstage: false), findsOneWidget);
       for (final text in [
         'Hủy bán',
         'Bán vật nuôi',
@@ -193,6 +193,9 @@ void main() {
       ]) {
         expect(find.text(text), findsNothing);
       }
+      await tester.ensureVisible(find.byKey(const ValueKey('profile-tab-2')));
+      await tester.tap(find.byKey(const ValueKey('profile-tab-2')));
+      await tester.pumpAndSettle();
       expect(find.textContaining('Chẩn đoán: Ổn định'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },

@@ -28,5 +28,7 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Smart Farm dùng camera để quét QR và mở hồ sơ vật nuôi.</string>
 </dict>
 </plist>

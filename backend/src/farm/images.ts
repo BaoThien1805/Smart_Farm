@@ -19,6 +19,7 @@ export async function normalizeAnimalImage(base64: string): Promise<string> {
     })
       .rotate()
       .resize(400, 400, { fit: "cover", withoutEnlargement: true })
+      .flatten({ background: "#ffffff" })
       .jpeg({ quality: 75 })
       .toBuffer();
     return `data:image/jpeg;base64,${output.toString("base64")}`;

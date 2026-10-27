@@ -1,0 +1,282 @@
+[
+  {
+    "id": "00",
+    "title": "Khảo sát và chốt phạm vi kỹ thuật",
+    "file": "prompts/00-audit.md",
+    "prerequisites": [],
+    "referenceGroups": [
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11"
+    ]
+  },
+  {
+    "id": "01",
+    "title": "Bộ màu và thành phần dùng chung",
+    "file": "prompts/01-design-system.md",
+    "prerequisites": [
+      "00"
+    ],
+    "referenceGroups": [
+      "01",
+      "02",
+      "03",
+      "06"
+    ]
+  },
+  {
+    "id": "02",
+    "title": "Bộ icon vật nuôi và hình minh họa",
+    "file": "prompts/02-illustrations.md",
+    "prerequisites": [
+      "01"
+    ],
+    "referenceGroups": [
+      "01",
+      "02",
+      "03",
+      "06",
+      "11"
+    ]
+  },
+  {
+    "id": "03",
+    "title": "Điều hướng và màn Thêm",
+    "file": "prompts/03-navigation-more.md",
+    "prerequisites": [
+      "01",
+      "02"
+    ],
+    "referenceGroups": [
+      "01",
+      "02",
+      "03",
+      "10"
+    ]
+  },
+  {
+    "id": "04",
+    "title": "Đăng nhập, đăng ký và chọn loài",
+    "file": "prompts/04-auth-onboarding.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "03"
+    ],
+    "referenceGroups": [
+      "01"
+    ]
+  },
+  {
+    "id": "05",
+    "title": "Tổng quan, thời tiết và vị trí trại",
+    "file": "prompts/05-dashboard-weather.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "03"
+    ],
+    "referenceGroups": [
+      "01",
+      "10"
+    ]
+  },
+  {
+    "id": "06",
+    "title": "Chuồng trại và danh mục",
+    "file": "prompts/06-pens-catalogs.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "03"
+    ],
+    "referenceGroups": [
+      "02"
+    ]
+  },
+  {
+    "id": "07",
+    "title": "Danh sách và bộ lọc vật nuôi",
+    "file": "prompts/07-animals-list-filter.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "03",
+      "06"
+    ],
+    "referenceGroups": [
+      "03"
+    ]
+  },
+  {
+    "id": "08",
+    "title": "Hồ sơ, ảnh và lịch sử vật nuôi",
+    "file": "prompts/08-animal-detail-history.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "03",
+      "07"
+    ],
+    "referenceGroups": [
+      "03",
+      "05"
+    ]
+  },
+  {
+    "id": "09",
+    "title": "Form thêm và sửa vật nuôi",
+    "file": "prompts/09-animal-editor.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "03",
+      "06",
+      "08"
+    ],
+    "referenceGroups": [
+      "03"
+    ]
+  },
+  {
+    "id": "10",
+    "title": "Ghi cân, chuyển chuồng, sức khỏe và thú y",
+    "file": "prompts/10-animal-events.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "08",
+      "09"
+    ],
+    "referenceGroups": [
+      "04",
+      "10"
+    ]
+  },
+  {
+    "id": "11",
+    "title": "Lịch chăm sóc và hoàn thành công việc",
+    "file": "prompts/11-care.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "03",
+      "08",
+      "10"
+    ],
+    "referenceGroups": [
+      "05"
+    ]
+  },
+  {
+    "id": "12",
+    "title": "Kho, nhập xuất và lịch sử phiếu",
+    "file": "prompts/12-inventory.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "03"
+    ],
+    "referenceGroups": [
+      "06",
+      "07"
+    ]
+  },
+  {
+    "id": "13",
+    "title": "Thu chi, form và lịch sử chỉnh sửa",
+    "file": "prompts/13-finance-ledger.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "03"
+    ],
+    "referenceGroups": [
+      "07",
+      "10"
+    ]
+  },
+  {
+    "id": "14",
+    "title": "Biểu đồ, giao dịch bán và hủy bán",
+    "file": "prompts/14-reports-sales.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "08",
+      "13"
+    ],
+    "referenceGroups": [
+      "08"
+    ]
+  },
+  {
+    "id": "15",
+    "title": "Nhân sự và xác nhận khóa/xóa",
+    "file": "prompts/15-personnel.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "03"
+    ],
+    "referenceGroups": [
+      "09",
+      "11"
+    ]
+  },
+  {
+    "id": "16",
+    "title": "Tài khoản và đổi mật khẩu",
+    "file": "prompts/16-profile.md",
+    "prerequisites": [
+      "01",
+      "02",
+      "03",
+      "15"
+    ],
+    "referenceGroups": [
+      "09"
+    ]
+  },
+  {
+    "id": "17",
+    "title": "Trạng thái chung và rà soát toàn bộ",
+    "file": "prompts/17-final-review.md",
+    "prerequisites": [
+      "04",
+      "05",
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16"
+    ],
+    "referenceGroups": [
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11"
+    ]
+  }
+]

@@ -8,6 +8,8 @@ import { z } from "zod";
 import { transaction } from "../database.js";
 import { ApiError } from "../auth/service.js";
 import { farmSpecies } from "./species-scope.js";
+import { normalizePenIcon, penIconKeys } from "./pen-icons.js";
+import { batchAnimalCodes } from "./batch-animal-codes.js";
 
 const uuid = z.string().uuid();
 const speciesFilter = z
@@ -51,6 +53,11 @@ const animalBody = z
   .strict();
 const health = z.enum(["NORMAL", "NEEDS_CARE"]);
 const eventBody = z.object({ requestId: uuid, date, notes }).strict();
+const batchAnimalIds = z
+  .array(uuid)
+  .min(1)
+  .max(1000)
+  .transform((ids) => [...new Set(ids)].sort());
 const careBody = z
   .object({
     animalId: uuid,
@@ -60,7 +67,7 @@ const careBody = z
     notes,
   })
   .strict();
-const animalSelect = `SELECT a.id,a.code,a.name,a.image_data AS "imageData",a.breed_id AS "breedId",b.name AS "breedName",b.species_id AS "speciesId",s.name AS "speciesName",a.gender,a.birth_date AS "birthDate",a.arrival_date AS "arrivalDate",a.origin,a.notes,a.pen_id AS "penId",p.name AS "penName",a.status,a.health_status AS "healthStatus",a.ended_date AS "endedDate" FROM animals a JOIN breeds b ON b.id=a.breed_id JOIN species s ON s.id=b.species_id JOIN pens p ON p.id=a.pen_id`;
+const animalSelect = `SELECT a.id,a.code,a.name,a.image_data AS "imageData",a.breed_id AS "breedId",b.name AS "breedName",b.species_id AS "speciesId",s.name AS "speciesName",a.gender,a.birth_date AS "birthDate",a.arrival_date AS "arrivalDate",a.origin,a.notes,a.pen_id AS "penId",p.name AS "penName",a.status,a.health_status AS "healthStatus",a.ended_date AS "endedDate",a.mother_id AS "motherId",a.birth_event_id AS "birthEventId" FROM animals a JOIN breeds b ON b.id=a.breed_id JOIN species s ON s.id=b.species_id JOIN pens p ON p.id=a.pen_id`;
 const careSelect = `SELECT t.id,t.animal_id AS "animalId",a.code AS "animalCode",t.kind,t.title,t.due_date AS "dueDate",t.notes,t.status,t.actual_date AS "actualDate",u.name AS "actorName" FROM care_tasks t JOIN animals a ON a.id=t.animal_id JOIN public.users u ON u.id=t.actor_id`;
 function fail(message: string, code = "CONFLICT"): never {
   throw new ApiError(409, code, message);
@@ -77,7 +84,12 @@ export function actualDate(value: string, arrival: string) {
   if (value > today() || value < arrival)
     fail("Ngày phải từ ngày nhập đàn đến hôm nay.", "INVALID_DATE");
 }
-export async function capacity(c: PoolClient, penId: string, exclude?: string) {
+export async function capacity(
+  c: PoolClient,
+  penId: string,
+  exclude?: string,
+  incoming = 1,
+) {
   const r = await c.query("SELECT * FROM pens WHERE id=$1 FOR UPDATE", [penId]);
   if (!r.rows[0] || !r.rows[0].active)
     fail("Chuồng không tồn tại hoặc đã ngừng sử dụng.");
@@ -85,8 +97,13 @@ export async function capacity(c: PoolClient, penId: string, exclude?: string) {
     "SELECT count(*)::int AS n FROM animals WHERE pen_id=$1 AND status='ACTIVE' AND ($2::uuid IS NULL OR id<>$2)",
     [penId, exclude ?? null],
   );
-  if (count.rows[0].n >= r.rows[0].capacity)
-    fail("Chuồng đã đủ sức chứa.", "PEN_FULL");
+  if (count.rows[0].n + incoming > r.rows[0].capacity)
+    fail(
+      incoming === 1
+        ? "Chuồng đã đủ sức chứa."
+        : `Chuồng chỉ còn ${Math.max(0, r.rows[0].capacity - count.rows[0].n)} chỗ, không đủ để nhập ${incoming} con.`,
+      "PEN_FULL",
+    );
 }
 export async function registerFarmRoutes(
   app: FastifyInstance,
@@ -170,7 +187,7 @@ export async function registerFarmRoutes(
     const restricted = settings.configured && !q.includeAvailable;
     const [species, breeds, areas, pens] = await Promise.all([
       pool.query(
-        "SELECT id,name,code FROM species WHERE NOT $1::boolean OR id=ANY($2::uuid[]) ORDER BY name",
+        'SELECT id,name,code,reproduction_mode AS "reproductionMode" FROM species WHERE NOT $1::boolean OR id=ANY($2::uuid[]) ORDER BY name',
         [restricted, settings.speciesIds],
       ),
       pool.query(
@@ -179,7 +196,7 @@ export async function registerFarmRoutes(
       ),
       pool.query("SELECT id,name,code FROM areas ORDER BY name"),
       pool.query(
-        `SELECT p.id,p.code,p.name,p.area_id AS "areaId",p.capacity,p.active,count(a.id)::int AS occupied FROM pens p LEFT JOIN animals a ON a.pen_id=p.id AND a.status='ACTIVE' GROUP BY p.id ORDER BY p.code`,
+        `SELECT p.id,p.code,p.name,p.icon_key AS "iconKey",p.icon_data AS "iconData",p.area_id AS "areaId",p.capacity,p.active,count(a.id)::int AS occupied,COALESCE(array_agg(DISTINCT s.name) FILTER(WHERE s.name IS NOT NULL),ARRAY[]::text[]) AS "speciesNames" FROM pens p LEFT JOIN animals a ON a.pen_id=p.id AND a.status='ACTIVE' LEFT JOIN breeds b ON b.id=a.breed_id LEFT JOIN species s ON s.id=b.species_id WHERE p.deleted_at IS NULL GROUP BY p.id ORDER BY p.code`,
       ),
     ]);
     return {
@@ -203,6 +220,13 @@ export async function registerFarmRoutes(
                 areaId: uuid,
                 capacity: z.number().int().min(1).max(100000),
                 active: z.boolean().default(true),
+                iconKey: z.enum(penIconKeys).optional(),
+                iconBase64: z
+                  .string()
+                  .min(1)
+                  .max(1398104)
+                  .nullable()
+                  .optional(),
               })
               .strict()
           : z.object({ name, code: codeSchema.optional() }).strict();
@@ -211,9 +235,21 @@ export async function registerFarmRoutes(
         method,
         url: `/api/farm/${kind}${method === "PATCH" ? "/:id" : ""}`,
         ...admin,
+        ...(kind === "pens" ? { bodyLimit: 2 * 1024 * 1024 } : {}),
         handler: async (r) => {
           const b = schema.parse(r.body) as Record<string, unknown>;
+          if (kind === "pens" && b.iconBase64 != null && b.iconKey !== "custom")
+            throw new ApiError(
+              400,
+              "INVALID_IMAGE",
+              "Hãy chọn chế độ icon tải lên để dùng ảnh.",
+            );
+          const uploadedIcon =
+            kind === "pens" && typeof b.iconBase64 === "string"
+              ? await normalizePenIcon(b.iconBase64)
+              : null;
           return write(r, b, async (c) => {
+            let existingIcon: string | null = null;
             const selection =
               kind === "species" && method === "POST"
                 ? await farmSpecies(c, r.account!.farmId)
@@ -249,7 +285,7 @@ export async function registerFarmRoutes(
             if (method === "PATCH") {
               const id = idOf(r);
               const current = await c.query(
-                `SELECT * FROM ${kind} WHERE id=$1 FOR UPDATE`,
+                `SELECT * FROM ${kind} WHERE id=$1${kind === "pens" ? " AND deleted_at IS NULL" : ""} FOR UPDATE`,
                 [id],
               );
               if (!current.rowCount)
@@ -258,6 +294,7 @@ export async function registerFarmRoutes(
                   "NOT_FOUND",
                   "Không tìm thấy danh mục.",
                 );
+              existingIcon = current.rows[0].icon_data ?? null;
               if (
                 kind === "breeds" &&
                 b.speciesId !== current.rows[0].species_id
@@ -295,6 +332,21 @@ export async function registerFarmRoutes(
                 : kind === "pens"
                   ? [b.code, b.name, b.areaId, b.capacity, b.active]
                   : [b.name];
+            if (kind === "pens" && b.iconKey !== undefined) {
+              const iconData =
+                b.iconKey === "custom"
+                  ? (uploadedIcon ??
+                    (b.iconBase64 === undefined ? existingIcon : null))
+                  : null;
+              if (b.iconKey === "custom" && !iconData)
+                throw new ApiError(
+                  400,
+                  "INVALID_IMAGE",
+                  "Vui lòng tải ảnh icon lên.",
+                );
+              columns.push("icon_key", "icon_data");
+              values.push(b.iconKey, iconData);
+            }
             if (
               kind !== "pens" &&
               (method === "POST" || b.code !== undefined)
@@ -327,6 +379,27 @@ export async function registerFarmRoutes(
       });
     app.delete(`/api/farm/${kind}/:id`, admin, async (r) =>
       write(r, null, async (c) => {
+        if (kind === "pens") {
+          const id = idOf(r);
+          const pen = await c.query(
+            "SELECT id FROM pens WHERE id=$1 AND deleted_at IS NULL FOR UPDATE",
+            [id],
+          );
+          if (!pen.rowCount)
+            throw new ApiError(404, "NOT_FOUND", "Không tìm thấy chuồng.");
+          const occupied = await c.query(
+            "SELECT 1 FROM animals WHERE pen_id=$1 AND status='ACTIVE' LIMIT 1",
+            [id],
+          );
+          if (occupied.rowCount)
+            fail("Chuồng còn vật nuôi đang nuôi, không thể xóa.");
+          // Retain references used by animal, transfer and stock history.
+          await c.query(
+            "UPDATE pens SET active=false,deleted_at=now() WHERE id=$1",
+            [id],
+          );
+          return { ok: true };
+        }
         const result = await c.query(
           `DELETE FROM ${kind} WHERE id=$1 RETURNING id`,
           [idOf(r)],
@@ -402,6 +475,73 @@ export async function registerFarmRoutes(
       return { animal: result.rows[0] };
     });
   });
+  app.post(
+    "/api/animals/batch/create",
+    { ...operate, bodyLimit: 1500000 },
+    async (r) => {
+      const b = animalBody
+        .omit({ code: true })
+        .extend({
+          firstCode: codeSchema,
+          quantity: z.number().int().min(1).max(1000),
+          requestId: uuid,
+        })
+        .strict()
+        .parse(r.body);
+      const codes = batchAnimalCodes(b.firstCode, b.quantity);
+      actualDate(b.arrivalDate, b.birthDate ?? b.arrivalDate);
+      const image = b.photoBase64
+        ? await normalizeAnimalImage(b.photoBase64)
+        : null;
+      return write(
+        r,
+        b,
+        async (c) => {
+          await capacity(c, b.penId, undefined, b.quantity);
+          const breed = await c.query("SELECT id FROM breeds WHERE id=$1", [
+            b.breedId,
+          ]);
+          if (!breed.rowCount)
+            throw new ApiError(
+              404,
+              "NOT_FOUND",
+              "Không tìm thấy giống vật nuôi.",
+            );
+          const existing = await c.query(
+            "SELECT code FROM animals WHERE upper(code)=ANY($1::text[]) LIMIT 1",
+            [codes.map((code) => code.toUpperCase())],
+          );
+          if (existing.rowCount)
+            fail(
+              `Mã ${existing.rows[0].code} đã tồn tại. Hãy chọn mã đầu tiên khác.`,
+              "DUPLICATE_CODE",
+            );
+          const result = await c.query(
+            "INSERT INTO animals(code,breed_id,gender,birth_date,arrival_date,origin,notes,pen_id,name,image_data) SELECT code,$2::uuid,$3,$4::date,$5::date,$6,$7,$8::uuid,$9,$10 FROM unnest($1::text[]) AS input(code) RETURNING id,code",
+            [
+              codes,
+              b.breedId,
+              b.gender,
+              b.birthDate,
+              b.arrivalDate,
+              b.origin,
+              b.notes,
+              b.penId,
+              b.name,
+              image,
+            ],
+          );
+          return {
+            count: result.rowCount,
+            animals: result.rows,
+            firstCode: codes[0],
+            lastCode: codes.at(-1),
+          };
+        },
+        b.requestId,
+      );
+    },
+  );
   app.patch(
     "/api/animals/:id",
     { ...operate, bodyLimit: 1500000 },
@@ -482,7 +622,11 @@ export async function registerFarmRoutes(
   app.delete("/api/animals/:id", admin, async (r) =>
     write(r, null, async (c) => {
       const id = idOf(r);
-      await animal(c, id);
+      const current = await animal(c, id);
+      if (current.birth_event_id)
+        fail(
+          "Hồ sơ con non đã liên kết với lần sinh hoặc lần nở; không thể xóa mất lịch sử.",
+        );
       const result = await c.query(
         "DELETE FROM animals WHERE id=$1 RETURNING id",
         [id],
@@ -520,6 +664,76 @@ export async function registerFarmRoutes(
       b.requestId,
     );
   });
+  app.post(
+    "/api/animals/batch/transfer",
+    { ...operate, bodyLimit: 65536 },
+    async (r) => {
+      const b = eventBody
+        .extend({ penId: uuid, animalIds: batchAnimalIds })
+        .parse(r.body);
+      return write(
+        r,
+        b,
+        async (c) => {
+          const selected = await c.query(
+            "SELECT id,pen_id,status,arrival_date FROM animals WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE",
+            [b.animalIds],
+          );
+          if (selected.rows.length !== b.animalIds.length)
+            throw new ApiError(
+              404,
+              "NOT_FOUND",
+              "Có vật nuôi không còn tồn tại. Hãy tải lại danh sách và chọn lại.",
+            );
+          if (selected.rows.some((a) => a.status !== "ACTIVE"))
+            fail(
+              "Có vật nuôi đã kết thúc nuôi. Hãy tải lại danh sách và chọn lại.",
+            );
+          const moving = selected.rows.filter((a) => a.pen_id !== b.penId);
+          if (!moving.length) fail("Tất cả vật nuôi đã chọn đều ở chuồng này.");
+          for (const a of moving) actualDate(b.date, a.arrival_date);
+          const last = await c.query(
+            "SELECT animal_id,max(date)::text AS date FROM transfers WHERE animal_id=ANY($1::uuid[]) GROUP BY animal_id",
+            [moving.map((a) => a.id)],
+          );
+          if (last.rows.some((t) => b.date < t.date))
+            fail(
+              "Ngày chuyển phải sau hoặc bằng lần chuyển trước của tất cả vật nuôi trong đợt.",
+            );
+          const destination = await c.query(
+            "SELECT capacity,active FROM pens WHERE id=$1 FOR UPDATE",
+            [b.penId],
+          );
+          if (!destination.rows[0]?.active)
+            fail("Chuồng không tồn tại hoặc đã ngừng sử dụng.");
+          const residents = await c.query(
+            "SELECT count(*)::int AS n FROM animals WHERE pen_id=$1 AND status='ACTIVE'",
+            [b.penId],
+          );
+          const free = destination.rows[0].capacity - residents.rows[0].n;
+          if (free < moving.length)
+            fail(
+              `Chuồng chỉ còn ${Math.max(0, free)} chỗ, cần ${moving.length} chỗ cho đợt chuyển.`,
+              "PEN_FULL",
+            );
+          const ids = moving.map((a) => a.id);
+          await c.query(
+            "INSERT INTO transfers(animal_id,from_pen_id,to_pen_id,date,notes,actor_id) SELECT id,pen_id,$2,$3,$4,$5 FROM animals WHERE id=ANY($1::uuid[])",
+            [ids, b.penId, b.date, b.notes, r.account!.id],
+          );
+          await c.query(
+            "UPDATE animals SET pen_id=$2 WHERE id=ANY($1::uuid[])",
+            [ids, b.penId],
+          );
+          return {
+            count: moving.length,
+            unchangedCount: selected.rows.length - moving.length,
+          };
+        },
+        b.requestId,
+      );
+    },
+  );
   app.post("/api/animals/:id/weights", operate, async (r) => {
     const b = eventBody
       .extend({
@@ -609,34 +823,49 @@ export async function registerFarmRoutes(
       b.requestId,
     );
   });
+  async function recordDeath(
+    c: PoolClient,
+    id: string,
+    b: z.infer<typeof eventBody>,
+  ) {
+    const a = await animal(c, id);
+    actualDate(b.date, a.arrival_date);
+    const latest = await c.query(
+      `SELECT max(date)::text AS date FROM (SELECT date FROM weights WHERE animal_id=$1 UNION ALL SELECT date FROM transfers WHERE animal_id=$1 UNION ALL SELECT date FROM health_records WHERE animal_id=$1 UNION ALL SELECT date FROM reproduction_events WHERE mother_id=$1 AND kind IN ('LIVE_BIRTH','EGG_COLLECTION')) events`,
+      [id],
+    );
+    if (latest.rows[0].date && b.date < latest.rows[0].date)
+      fail("Ngày chết không thể trước lịch sử đã ghi.");
+    await c.query(
+      "UPDATE animals SET status='DEAD',ended_date=$2,notes=concat_ws(E'\\n',notes,$3::text) WHERE id=$1",
+      [id, b.date, b.notes],
+    );
+    await c.query(
+      "UPDATE care_tasks SET status='CANCELLED' WHERE animal_id=$1 AND status='PENDING'",
+      [id],
+    );
+    return { ok: true };
+  }
   app.post("/api/animals/:id/death", admin, async (r) => {
     const b = eventBody.parse(r.body);
-    const id = idOf(r);
-    return write(
-      r,
-      b,
-      async (c) => {
-        const a = await animal(c, id);
-        actualDate(b.date, a.arrival_date);
-        const latest = await c.query(
-          `SELECT max(date)::text AS date FROM (SELECT date FROM weights WHERE animal_id=$1 UNION ALL SELECT date FROM transfers WHERE animal_id=$1 UNION ALL SELECT date FROM health_records WHERE animal_id=$1) events`,
-          [id],
-        );
-        if (latest.rows[0].date && b.date < latest.rows[0].date)
-          fail("Ngày chết không thể trước lịch sử đã ghi.");
-        await c.query(
-          "UPDATE animals SET status='DEAD',ended_date=$2,notes=concat_ws(E'\\n',notes,$3::text) WHERE id=$1",
-          [id, b.date, b.notes],
-        );
-        await c.query(
-          "UPDATE care_tasks SET status='CANCELLED' WHERE animal_id=$1 AND status='PENDING'",
-          [id],
-        );
-        return { ok: true };
-      },
-      b.requestId,
-    );
+    return write(r, b, (c) => recordDeath(c, idOf(r), b), b.requestId);
   });
+  app.post(
+    "/api/animals/batch/death",
+    { ...admin, bodyLimit: 65536 },
+    async (r) => {
+      const b = eventBody.extend({ animalIds: batchAnimalIds }).parse(r.body);
+      return write(
+        r,
+        b,
+        async (c) => {
+          for (const id of b.animalIds) await recordDeath(c, id, b);
+          return { count: b.animalIds.length };
+        },
+        b.requestId,
+      );
+    },
+  );
   app.get("/api/care-tasks", read, async (r) => {
     const q = z
       .object({
@@ -678,6 +907,47 @@ export async function registerFarmRoutes(
       return { task: task.rows[0] };
     });
   });
+  app.post(
+    "/api/care-tasks/batch",
+    { ...care, bodyLimit: 65536 },
+    async (r) => {
+      const b = careBody
+        .omit({ animalId: true })
+        .extend({
+          animalIds: batchAnimalIds,
+          requestId: uuid,
+        })
+        .parse(r.body);
+      return write(
+        r,
+        b,
+        async (c) => {
+          const animals = await c.query(
+            "SELECT id,status,arrival_date FROM animals WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE",
+            [b.animalIds],
+          );
+          if (animals.rows.length !== b.animalIds.length)
+            throw new ApiError(
+              404,
+              "NOT_FOUND",
+              "Có vật nuôi không còn tồn tại. Hãy tải lại danh sách và chọn lại.",
+            );
+          if (animals.rows.some((a) => a.status !== "ACTIVE"))
+            fail(
+              "Có vật nuôi đã kết thúc nuôi. Hãy tải lại danh sách và chọn lại.",
+            );
+          if (animals.rows.some((a) => b.dueDate < a.arrival_date))
+            fail("Ngày hẹn phải từ ngày nhập đàn của tất cả vật nuôi đã chọn.");
+          const tasks = await c.query(
+            'INSERT INTO care_tasks(animal_id,kind,title,due_date,notes,actor_id) SELECT id,$2,$3,$4,$5,$6 FROM unnest($1::uuid[]) AS selected(id) RETURNING id,animal_id AS "animalId"',
+            [b.animalIds, b.kind, b.title, b.dueDate, b.notes, r.account!.id],
+          );
+          return { tasks: tasks.rows, count: tasks.rows.length };
+        },
+        b.requestId,
+      );
+    },
+  );
   async function pending(c: PoolClient, id: string) {
     const result = await c.query(
       "SELECT * FROM care_tasks WHERE id=$1 FOR UPDATE",
@@ -751,7 +1021,7 @@ export async function registerFarmRoutes(
       [scope],
     );
     const pens = await pool.query(
-      `SELECT p.id,p.code,p.name,p.capacity,count(a.id)::int AS occupied FROM pens p LEFT JOIN animals a ON a.pen_id=p.id AND a.status='ACTIVE' WHERE p.active GROUP BY p.id ORDER BY p.code`,
+      `SELECT p.id,p.code,p.name,p.icon_key AS "iconKey",p.icon_data AS "iconData",p.capacity,count(a.id)::int AS occupied,COALESCE(array_agg(DISTINCT s.name) FILTER(WHERE s.name IS NOT NULL),ARRAY[]::text[]) AS "speciesNames" FROM pens p LEFT JOIN animals a ON a.pen_id=p.id AND a.status='ACTIVE' LEFT JOIN breeds b ON b.id=a.breed_id LEFT JOIN species s ON s.id=b.species_id WHERE p.active GROUP BY p.id ORDER BY p.code`,
     );
     const tasks = await pool.query(
       `${careSelect} WHERE t.status='PENDING' AND t.due_date<=$1::date+7 AND ($2::uuid[] IS NULL OR a.breed_id IN (SELECT id FROM breeds WHERE species_id=ANY($2))) ORDER BY t.due_date,t.id LIMIT 20`,
@@ -768,6 +1038,7 @@ export async function registerFarmRoutes(
       ...counts.rows[0],
       ...due.rows[0],
       activePens: pens.rowCount,
+      pens: pens.rows,
       fullPens: pens.rows.filter((p) => p.occupied >= p.capacity),
       tasks: tasks.rows,
       today: today(),

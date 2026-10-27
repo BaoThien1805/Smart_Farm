@@ -109,6 +109,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('GOAT-01'), findsOneWidget);
       expect(find.text('Ghi nhận chết'), findsNothing);
+      await tester.ensureVisible(find.byKey(const ValueKey('profile-tab-1')));
+      await tester.tap(find.byKey(const ValueKey('profile-tab-1')));
+      await tester.pumpAndSettle();
       expect(find.byType(WeightChart), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.ensureVisible(find.text('Ghi cân nặng'));
@@ -116,12 +119,12 @@ void main() {
       await tester.pumpAndSettle();
       final kg = find.widgetWithText(TextFormField, 'Cân nặng (kg)');
       await tester.enterText(kg, '0');
-      await tester.tap(find.widgetWithText(FilledButton, 'Lưu'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Lưu cân nặng'));
       await tester.pumpAndSettle();
       expect(find.text('Nhập số lớn hơn 0.'), findsOneWidget);
       expect(calls, 0);
       await tester.enterText(kg, '25.5');
-      await tester.tap(find.widgetWithText(FilledButton, 'Lưu'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Lưu cân nặng'));
       await tester.pumpAndSettle();
       expect(calls, 1);
       expect(find.byType(AlertDialog), findsNothing);
@@ -180,10 +183,14 @@ void main() {
       expect(find.text('Quá hạn'), findsOneWidget);
       await tester.tap(find.widgetWithText(FilledButton, 'Hoàn thành'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Lưu'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Xác nhận hoàn thành'),
+      );
       await tester.pumpAndSettle();
       expect(find.text('Thử lại sau.'), findsOneWidget);
-      await tester.tap(find.widgetWithText(FilledButton, 'Lưu'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Xác nhận hoàn thành'),
+      );
       await tester.pumpAndSettle();
       expect(bodies.length, 2);
       expect(bodies[0]['requestId'], bodies[1]['requestId']);
@@ -222,7 +229,8 @@ void main() {
     expect(find.text('Không có vật nuôi phù hợp.'), findsOneWidget);
     await tester.tap(find.text('Chuồng & danh mục'));
     await tester.pumpAndSettle();
-    expect(find.text('1/10 con · Đang sử dụng'), findsOneWidget);
+    expect(find.text('1/10 con'), findsOneWidget);
+    expect(find.text('Đang sử dụng'), findsWidgets);
     expect(find.byTooltip('Sửa'), findsNothing);
     expect(find.byTooltip('Xóa'), findsNothing);
     expect(tester.takeException(), isNull);

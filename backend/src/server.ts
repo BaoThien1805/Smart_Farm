@@ -23,7 +23,7 @@ process.on("SIGTERM", () => {
 });
 try {
   const migration = await pool.query(
-    "SELECT 1 FROM schema_migrations WHERE version=11",
+    "SELECT 1 FROM schema_migrations WHERE version=14",
   );
   if (!migration.rowCount)
     throw new Error("Run db:migrate before starting the API.");

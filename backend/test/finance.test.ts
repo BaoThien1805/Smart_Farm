@@ -681,3 +681,358 @@ test("concurrent cancellation cannot overfill the final pen slot", async () => {
   ).rows[0].n;
   assert.equal(capacity, 2);
 });
+
+const batchCall = (
+  method: "GET" | "POST",
+  url: string,
+  payload?: object,
+  token = adminToken,
+) =>
+  app.inject({
+    method,
+    url,
+    remoteAddress: "127.0.0.92",
+    headers: authorization(token),
+    ...(payload ? { payload } : {}),
+  });
+async function batchGroup(count: number) {
+  const key = "BATCH-" + randomUUID().slice(0, 8);
+  const species = (
+    await batchCall("POST", "/api/farm/species", { name: key })
+  ).json().item.id;
+  const breed = (
+    await batchCall("POST", "/api/farm/breeds", {
+      name: key,
+      speciesId: species,
+    })
+  ).json().item.id;
+  const area = (
+    await batchCall("POST", "/api/farm/areas", { name: key })
+  ).json().item.id;
+  const pen = (
+    await batchCall("POST", "/api/farm/pens", {
+      name: key,
+      code: key,
+      areaId: area,
+      capacity: 10,
+    })
+  ).json().item.id;
+  const ids: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const result = await batchCall("POST", "/api/animals", {
+      code: `${key}-${i}`,
+      breedId: breed,
+      gender: "FEMALE",
+      arrivalDate: "2026-01-01",
+      penId: pen,
+      notes: "Ghi chú ban đầu",
+    });
+    assert.equal(result.statusCode, 200, result.body);
+    ids.push(result.json().animal.id);
+  }
+  ids.sort();
+  for (const id of ids) {
+    const result = await batchCall("POST", "/api/care-tasks", {
+      animalId: id,
+      kind: "CHECKUP",
+      title: key,
+      dueDate: now,
+    });
+    assert.equal(result.statusCode, 200, result.body);
+  }
+  return { ids, pen };
+}
+
+test("batch selling creates one audited receipt per selected animal, retries once and preserves single-sale cancellation", async () => {
+  const group = await batchGroup(3);
+  const body = {
+    requestId: randomUUID(),
+    date: now,
+    buyer: "Người mua theo đợt",
+    notes: "Bán hai con",
+    items: [
+      { animalId: group.ids[0], amount: 1000000 },
+      { animalId: group.ids[1], amount: 2000000 },
+    ],
+  };
+  const [first, retry] = await Promise.all([
+    batchCall("POST", "/api/animals/batch/sell", body),
+    batchCall("POST", "/api/animals/batch/sell", body),
+  ]);
+  assert.equal(first.statusCode, 200, first.body);
+  assert.deepEqual(first.json(), retry.json());
+  assert.equal(first.json().count, 2);
+  assert.equal(first.json().totalAmount, "3000000");
+  const rows = await pool.query(
+    "SELECT s.animal_id,e.amount::text,(SELECT count(*)::int FROM finance_audit a WHERE a.entry_id=e.id) AS audit FROM sales s JOIN finance_entries e ON e.sale_id=s.id WHERE s.animal_id=ANY($1::uuid[])",
+    [group.ids],
+  );
+  assert.equal(rows.rows.length, 2);
+  assert.equal(
+    rows.rows.reduce((sum, r) => sum + Number(r.amount), 0),
+    3000000,
+  );
+  assert.ok(rows.rows.every((r) => r.audit === 1));
+  for (const id of group.ids.slice(0, 2)) {
+    const detail = (await batchCall("GET", `/api/animals/${id}`)).json();
+    assert.equal(detail.animal.status, "SOLD");
+    assert.equal(detail.careTasks[0].status, "CANCELLED");
+  }
+  const untouched = (
+    await batchCall("GET", `/api/animals/${group.ids[2]}`)
+  ).json();
+  assert.equal(untouched.animal.status, "ACTIVE");
+  assert.equal(untouched.careTasks[0].status, "PENDING");
+  assert.equal(
+    (
+      await batchCall("POST", "/api/animals/batch/sell", {
+        ...body,
+        requestId: randomUUID(),
+      })
+    ).statusCode,
+    409,
+  );
+  assert.equal(
+    (
+      await batchCall("POST", "/api/animals/batch/sell", {
+        ...body,
+        buyer: "Đổi nội dung",
+      })
+    ).statusCode,
+    409,
+  );
+  const sale = first.json().sales[0];
+  const cancelled = await batchCall(
+    "POST",
+    `/api/sales/${sale.saleId}/cancel`,
+    cancelBody(group.pen),
+  );
+  assert.equal(cancelled.statusCode, 200, cancelled.body);
+  assert.equal(
+    (await batchCall("GET", `/api/animals/${sale.animalId}`)).json().animal
+      .status,
+    "ACTIVE",
+  );
+  assert.ok(
+    (
+      await batchCall("GET", `/api/sales?animalId=${sale.animalId}&status=ALL`)
+    ).json().sales[0].cancelledAt,
+  );
+  for (const invalid of [
+    { items: [] },
+    { items: [body.items[0], body.items[0]] },
+    { items: [{ animalId: group.ids[2], amount: 0 }] },
+    { items: [{ animalId: group.ids[2], amount: 1.5 }] },
+    { requestId: undefined },
+  ]) {
+    assert.equal(
+      (
+        await batchCall("POST", "/api/animals/batch/sell", {
+          ...body,
+          ...invalid,
+        })
+      ).statusCode,
+      400,
+    );
+  }
+});
+
+test("batch sale rolls back earlier animals, receipts, audit and care when a later animal has newer history", async () => {
+  const group = await batchGroup(2);
+  await batchCall("POST", `/api/animals/${group.ids[1]}/weights`, {
+    requestId: randomUUID(),
+    date: now,
+    kg: 20,
+    notes: "",
+  });
+  const yesterday = new Date(`${now}T00:00:00Z`);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const response = await batchCall("POST", "/api/animals/batch/sell", {
+    requestId: randomUUID(),
+    date: yesterday.toISOString().slice(0, 10),
+    items: group.ids.map((animalId) => ({ animalId, amount: 1000000 })),
+  });
+  assert.equal(response.statusCode, 409, response.body);
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*)::int AS n FROM sales WHERE animal_id=ANY($1::uuid[])",
+        [group.ids],
+      )
+    ).rows[0].n,
+    0,
+  );
+  for (const id of group.ids) {
+    const detail = (await batchCall("GET", `/api/animals/${id}`)).json();
+    assert.equal(detail.animal.status, "ACTIVE");
+    assert.equal(detail.careTasks[0].status, "PENDING");
+  }
+});
+
+test("batch death is atomic and idempotent, preserves history and notes, cancels care without creating income", async () => {
+  const group = await batchGroup(3);
+  await batchCall("POST", `/api/animals/${group.ids[1]}/weights`, {
+    requestId: randomUUID(),
+    date: now,
+    kg: 22,
+    notes: "",
+  });
+  const ids = group.ids.slice(0, 2);
+  const body = {
+    requestId: randomUUID(),
+    date: now,
+    notes: "Ghi nhận chết theo đợt",
+    animalIds: ids,
+  };
+  const yesterday = new Date(`${now}T00:00:00Z`);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  assert.equal(
+    (
+      await batchCall("POST", "/api/animals/batch/death", {
+        ...body,
+        date: yesterday.toISOString().slice(0, 10),
+      })
+    ).statusCode,
+    409,
+  );
+  for (const id of ids) {
+    const detail = (await batchCall("GET", `/api/animals/${id}`)).json();
+    assert.equal(detail.animal.status, "ACTIVE");
+    assert.equal(detail.careTasks[0].status, "PENDING");
+  }
+  assert.equal(
+    (
+      await batchCall("POST", "/api/animals/batch/death", {
+        ...body,
+        animalIds: [ids[0], randomUUID()],
+      })
+    ).statusCode,
+    404,
+  );
+  const before = (
+    await pool.query("SELECT count(*)::int AS n FROM finance_entries")
+  ).rows[0].n;
+  const [first, retry] = await Promise.all([
+    batchCall("POST", "/api/animals/batch/death", body),
+    batchCall("POST", "/api/animals/batch/death", body),
+  ]);
+  assert.equal(first.statusCode, 200, first.body);
+  assert.deepEqual(first.json(), retry.json());
+  assert.equal(first.json().count, 2);
+  for (const id of ids) {
+    const detail = (await batchCall("GET", `/api/animals/${id}`)).json();
+    assert.equal(detail.animal.status, "DEAD");
+    assert.equal(detail.careTasks[0].status, "CANCELLED");
+    assert.ok(detail.animal.notes.includes("Ghi chú ban đầu"));
+    assert.equal(detail.animal.notes.split(body.notes).length, 2);
+  }
+  assert.equal(
+    (await batchCall("GET", `/api/animals/${ids[1]}`)).json().weights.length,
+    1,
+  );
+  assert.equal(
+    (await batchCall("GET", `/api/animals/${group.ids[2]}`)).json().animal
+      .status,
+    "ACTIVE",
+  );
+  assert.equal(
+    (await pool.query("SELECT count(*)::int AS n FROM finance_entries")).rows[0]
+      .n,
+    before,
+  );
+  assert.equal(
+    (
+      await batchCall("POST", "/api/animals/batch/death", {
+        ...body,
+        requestId: randomUUID(),
+      })
+    ).statusCode,
+    409,
+  );
+  assert.equal(
+    (
+      await batchCall("POST", "/api/animals/batch/death", {
+        ...body,
+        animalIds: [],
+      })
+    ).statusCode,
+    400,
+  );
+});
+
+test("batch sale and death stay admin-only and cannot touch animals in another farm", async () => {
+  const group = await batchGroup(1);
+  const death = { requestId: randomUUID(), date: now, animalIds: group.ids };
+  const sale = {
+    requestId: randomUUID(),
+    date: now,
+    items: group.ids.map((animalId) => ({ animalId, amount: 1000000 })),
+  };
+  for (const role of ["STAFF", "VET", "ACCOUNTANT"]) {
+    let token = staffToken;
+    if (role !== "STAFF") {
+      const email = `batch-lifecycle-${role.toLowerCase()}@test.local`;
+      const created = await batchCall("POST", "/api/users", {
+        name: role,
+        email,
+        role,
+        password: staffPassword,
+      });
+      assert.equal(created.statusCode, 201, created.body);
+      token = (
+        await batchCall("POST", "/api/auth/login", {
+          email,
+          password: staffPassword,
+        })
+      ).json().token;
+    }
+    assert.equal(
+      (await batchCall("POST", "/api/animals/batch/sell", sale, token))
+        .statusCode,
+      403,
+    );
+    assert.equal(
+      (await batchCall("POST", "/api/animals/batch/death", death, token))
+        .statusCode,
+      403,
+    );
+  }
+  const owner = await app.inject({
+    method: "POST",
+    url: "/api/auth/register",
+    remoteAddress: "127.0.0.93",
+    payload: {
+      name: "Chủ đối chứng",
+      farmName: "Trại đối chứng batch",
+      email: "batch-lifecycle-owner@test.local",
+      password: staffPassword,
+    },
+  });
+  assert.equal(owner.statusCode, 201, owner.body);
+  assert.equal(
+    (
+      await batchCall(
+        "POST",
+        "/api/animals/batch/sell",
+        sale,
+        owner.json().token,
+      )
+    ).statusCode,
+    404,
+  );
+  assert.equal(
+    (
+      await batchCall(
+        "POST",
+        "/api/animals/batch/death",
+        death,
+        owner.json().token,
+      )
+    ).statusCode,
+    404,
+  );
+  const detail = (
+    await batchCall("GET", `/api/animals/${group.ids[0]}`)
+  ).json();
+  assert.equal(detail.animal.status, "ACTIVE");
+});
