@@ -86,19 +86,14 @@ void main() {
           care = role != 'ACCOUNTANT',
           examine = ['ADMIN', 'VET'].contains(role),
           finance = ['ADMIN', 'ACCOUNTANT'].contains(role);
-      expect(
-        find.text('Ghi cân nặng'),
-        operate ? findsOneWidget : findsNothing,
-      );
-      expect(
-        find.text('Chuyển chuồng'),
-        operate ? findsOneWidget : findsNothing,
-      );
-      expect(find.text('Ghi sức khỏe'), care ? findsOneWidget : findsNothing);
-      expect(
-        find.widgetWithText(FilledButton, 'Khám thú y'),
-        examine ? findsOneWidget : findsNothing,
-      );
+      for (final oldAction in [
+        'Ghi cân nặng',
+        'Chuyển chuồng',
+        'Ghi sức khỏe',
+      ]) {
+        expect(find.text(oldAction), findsNothing);
+      }
+      expect(find.widgetWithText(FilledButton, 'Khám thú y'), findsNothing);
       expect(find.text('Sửa hồ sơ'), operate ? findsOneWidget : findsNothing);
       expect(
         find.byTooltip('Đổi ảnh qua chỉnh sửa hồ sơ'),
@@ -112,7 +107,42 @@ void main() {
         find.byTooltip('Xóa hồ sơ nhập nhầm'),
         role == 'ADMIN' ? findsOneWidget : findsNothing,
       );
+      expect(
+        find.text('Đặt lịch chăm sóc'),
+        care ? findsOneWidget : findsNothing,
+      );
+      if (role == 'ADMIN') {
+        final actions = find.byKey(const ValueKey('profile-actions'));
+        expect(
+          find.descendant(
+            of: actions,
+            matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+          ),
+          findsNWidgets(4),
+        );
+        expect(
+          t.getTopLeft(actions).dy,
+          lessThan(
+            t.getTopLeft(find.byKey(const ValueKey('profile-tab-0'))).dy,
+          ),
+        );
+      }
+      await profileTab(t, 1);
+      expect(
+        find.text('Ghi cân nặng'),
+        operate ? findsOneWidget : findsNothing,
+      );
+      await profileTab(t, 2);
+      expect(find.text('Ghi sức khỏe'), care ? findsOneWidget : findsNothing);
+      expect(
+        find.widgetWithText(FilledButton, 'Khám thú y'),
+        examine ? findsOneWidget : findsNothing,
+      );
       await profileTab(t, 3);
+      expect(
+        find.widgetWithText(OutlinedButton, 'Chuyển chuồng'),
+        operate ? findsOneWidget : findsNothing,
+      );
       expect(
         find.byType(SalesHistory),
         finance ? findsOneWidget : findsNothing,
@@ -259,6 +289,7 @@ void main() {
     'transfer entry keeps original available-pen rules and cancel does not save',
     (t) async {
       final fixture = await mountProfile(t, role: 'STAFF');
+      await profileTab(t, 3);
       await tapProfile(t, find.widgetWithText(OutlinedButton, 'Chuyển chuồng'));
       final field = t.widget<DropdownButton<String>>(
         find.descendant(
@@ -320,7 +351,7 @@ void main() {
       expect(
         t
             .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Ghi cân nặng'),
+              find.widgetWithText(FilledButton, 'Sửa hồ sơ'),
             )
             .onPressed,
         isNull,

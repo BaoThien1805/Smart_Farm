@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_farm/core/farm_illustrations.dart';
 import 'package:smart_farm/core/theme.dart';
 
-import 'preview/illustrations_preview.dart';
+import 'support/illustrations_fixture.dart';
 import 'support/ui_preview.dart';
 
 class _MissingArtBundle extends CachingAssetBundle {

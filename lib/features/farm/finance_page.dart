@@ -299,8 +299,7 @@ class _FinancePageState extends State<FinancePage> {
   Future<void> edit(String type, [FarmRecord? entry]) async {
     if (!canWrite ||
         (entry != null &&
-            (entry.text('saleId').isNotEmpty ||
-                entry.text('category') == 'ANIMAL_SALE' ||
+            (isLinkedFinanceEntry(entry) ||
                 entry.text('cancelledAt').isNotEmpty))) {
       return;
     }
@@ -322,8 +321,7 @@ class _FinancePageState extends State<FinancePage> {
 
   Future<void> cancel(FarmRecord entry) async {
     if (!canWrite ||
-        entry.text('saleId').isNotEmpty ||
-        entry.text('category') == 'ANIMAL_SALE' ||
+        isLinkedFinanceEntry(entry) ||
         entry.text('cancelledAt').isNotEmpty) {
       return;
     }
@@ -355,8 +353,7 @@ class _FinancePageState extends State<FinancePage> {
 
   Widget ledgerEntry(FarmRecord e) {
     final cancelled = e.text('cancelledAt').isNotEmpty;
-    final linked =
-        e.text('saleId').isNotEmpty || e.text('category') == 'ANIMAL_SALE';
+    final linked = isLinkedFinanceEntry(e);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: FarmInfoCard(
@@ -422,7 +419,11 @@ class _FinancePageState extends State<FinancePage> {
             ],
             if (linked) ...[
               const SizedBox(height: 12),
-              const Text('Liên kết giao dịch bán'),
+              Text(
+                e.text('stockEntryId').isNotEmpty
+                    ? 'Từ nhập kho thức ăn. Hủy khoản chi qua phiếu nhập kho.'
+                    : 'Liên kết giao dịch bán',
+              ),
             ],
             const SizedBox(height: 12),
             Wrap(

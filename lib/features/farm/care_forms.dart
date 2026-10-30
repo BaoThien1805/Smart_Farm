@@ -32,14 +32,25 @@ Future<bool> careForm(
 Future<bool> completeCareForm(
   BuildContext context,
   FarmRepository repo,
-  FarmRecord task,
-) async {
+  FarmRecord task, {
+  List<FarmRecord>? selectedTasks,
+}) async {
   if (task.text('status') != 'PENDING') return false;
+  if (selectedTasks != null &&
+      (selectedTasks.isEmpty ||
+          selectedTasks.length > 1000 ||
+          selectedTasks.any((t) => t.text('status') != 'PENDING'))) {
+    return false;
+  }
   return await showDialog<bool>(
         context: context,
         barrierDismissible: false,
-        builder: (_) =>
-            CareEditor(repository: repo, task: task, completing: true),
+        builder: (_) => CareEditor(
+          repository: repo,
+          task: task,
+          completing: true,
+          selectedTasks: selectedTasks,
+        ),
       ) ??
       false;
 }
@@ -92,11 +103,13 @@ class CareEditor extends StatefulWidget {
     this.task,
     this.completing = false,
     this.initialAnimals,
+    this.selectedTasks,
   });
   final FarmRepository repository;
   final FarmRecord? animal, task;
   final bool completing;
   final List<FarmRecord>? initialAnimals;
+  final List<FarmRecord>? selectedTasks;
   @override
   State<CareEditor> createState() => _CareEditorState();
 }
@@ -257,6 +270,9 @@ class _CareEditorState extends State<CareEditor> {
             'status': status,
             'notes': notes.text.trim(),
             'requestId': requestId,
+            if (widget.selectedTasks != null)
+              'taskIds': widget.selectedTasks!.map((t) => t.id).toList()
+                ..sort(),
           }
         : <String, dynamic>{
             if (widget.task == null && !batch) 'animalId': widget.animal!.id,
@@ -269,7 +285,9 @@ class _CareEditorState extends State<CareEditor> {
             'dueDate': farmIsoDate(date.text),
             'notes': notes.text.trim(),
           };
-    final path = batch
+    final path = widget.selectedTasks != null
+        ? '/care-tasks/batch/complete'
+        : batch
         ? '/care-tasks/batch'
         : '/care-tasks${widget.task == null ? '' : '/${widget.task!.id}'}${widget.completing ? '/complete' : ''}';
     try {
@@ -343,7 +361,9 @@ class _CareEditorState extends State<CareEditor> {
       canPop: !busy,
       child: FarmFormLayout(
         title: widget.completing
-            ? 'Hoàn thành chăm sóc'
+            ? widget.selectedTasks == null
+                  ? 'Hoàn thành chăm sóc'
+                  : 'Hoàn thành ${widget.selectedTasks!.length} lịch'
             : widget.task == null
             ? 'Đặt lịch chăm sóc'
             : 'Sửa lịch chăm sóc',
@@ -511,7 +531,22 @@ class _CareEditorState extends State<CareEditor> {
                 ),
                 const SizedBox(height: 20),
               ],
-              if (widget.task != null) ...[
+              if (widget.selectedTasks != null) ...[
+                Text(
+                  'Đã chọn ${widget.selectedTasks!.length} lịch',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                for (final task in widget.selectedTasks!.take(5))
+                  Text('${task.text('animalCode')} · ${task.text('title')}'),
+                if (widget.selectedTasks!.length > 5)
+                  Text('Và ${widget.selectedTasks!.length - 5} lịch khác.'),
+                const SizedBox(height: 12),
+                const Text(
+                  'Ngày thực hiện, tình trạng sức khỏe và ghi chú kết quả áp dụng cho tất cả lịch đã chọn. Mỗi lịch vẫn lưu kết quả riêng.',
+                ),
+                const SizedBox(height: 20),
+              ] else if (widget.task != null) ...[
                 CareTaskSummary(task: widget.task!),
                 const SizedBox(height: 20),
               ],

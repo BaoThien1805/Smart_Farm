@@ -28,3 +28,9 @@ CREATE TABLE finance_audit (
 );
 CREATE INDEX finance_audit_entry_idx ON finance_audit(entry_id,created_at);
 `;
+
+export const stockPurchaseMigration = `
+ALTER TABLE finance_entries ADD COLUMN stock_entry_id uuid UNIQUE REFERENCES stock_entries(id);
+ALTER TABLE finance_entries ADD CONSTRAINT finance_stock_purchase_check
+  CHECK(stock_entry_id IS NULL OR (sale_id IS NULL AND kind='OUT' AND category='FEED'));
+`;

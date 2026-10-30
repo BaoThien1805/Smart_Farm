@@ -6,6 +6,7 @@ import '../../core/ui_components.dart';
 import 'farm_repository.dart';
 import 'farm_refresh.dart';
 import 'farm_widgets.dart';
+import 'finance_values.dart';
 import 'inventory_forms.dart';
 import 'inventory_widgets.dart';
 
@@ -290,6 +291,12 @@ class _InventoryPageState extends State<InventoryPage> {
             ),
             const SizedBox(height: 12),
             Text('Ngày ghi nhận: ${farmDate(item.text('date'))}'),
+            if (incoming)
+              Text(
+                item.text('amount').isEmpty
+                    ? 'Tiền mua: Chưa ghi nhận'
+                    : 'Tiền mua: ${vnd(item.values['amount'])}',
+              ),
             if (item.text('actorName').isNotEmpty)
               Text('Người thực hiện: ${item.text('actorName')}'),
             if (item.text('penName').isNotEmpty)

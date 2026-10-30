@@ -89,6 +89,7 @@ class CatalogFixture {
           if (kind == 'pens') 'occupied': 0,
           ...stored,
         });
+        return catalogResponse({'item': data[kind]!.last}, 201);
       } else {
         data[kind]!
             .firstWhere((item) => item['id'] == segments.last)

@@ -99,6 +99,9 @@ void main() {
       expect(find.text('Sửa hồ sơ'), findsNothing);
       expect(find.text('Ghi cân nặng'), findsNothing);
       expect(find.text('Bán vật nuôi'), findsNothing);
+      await tester.ensureVisible(find.byKey(const ValueKey('profile-tab-2')));
+      await tester.tap(find.byKey(const ValueKey('profile-tab-2')));
+      await tester.pumpAndSettle();
       expect(find.text('Khám thú y'), findsOneWidget);
       await tester.tap(find.text('Khám thú y'));
       await tester.pumpAndSettle();

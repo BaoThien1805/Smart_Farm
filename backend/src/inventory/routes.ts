@@ -5,6 +5,7 @@ import { z } from "zod";
 import { transaction } from "../database.js";
 import { ApiError } from "../auth/service.js";
 import { today } from "../farm/routes.js";
+import { auditFinanceEntry } from "../finance/audit.js";
 const uuid = z.string().uuid();
 const text = z.string().trim().min(1).max(100);
 const notes = z.string().trim().max(2000).default("");
@@ -43,7 +44,7 @@ const feedBody = z
   })
   .strict();
 const feedSelect = `SELECT f.id,f.code,f.name,f.low_stock::float8 AS "lowStock",f.active,f.notes,COALESCE(sum(CASE WHEN e.cancelled_at IS NULL THEN CASE WHEN e.kind='IN' THEN e.quantity ELSE -e.quantity END ELSE 0 END),0)::float8 AS stock FROM feeds f LEFT JOIN stock_entries e ON e.feed_id=f.id`;
-const stockSelect = `SELECT e.id,e.feed_id AS "feedId",f.code AS "feedCode",f.name AS "feedName",e.kind,e.date,e.quantity::float8 AS quantity,e.pen_id AS "penId",p.name AS "penName",e.notes,u.name AS "actorName",e.created_at AS "createdAt",e.cancelled_at AS "cancelledAt",e.cancel_reason AS "cancelReason",cu.name AS "cancelledByName" FROM stock_entries e JOIN feeds f ON f.id=e.feed_id JOIN public.users u ON u.id=e.actor_id LEFT JOIN pens p ON p.id=e.pen_id LEFT JOIN public.users cu ON cu.id=e.cancelled_by`;
+const stockSelect = `SELECT e.id,e.feed_id AS "feedId",f.code AS "feedCode",f.name AS "feedName",e.kind,e.date,e.quantity::float8 AS quantity,e.pen_id AS "penId",p.name AS "penName",e.notes,u.name AS "actorName",e.created_at AS "createdAt",e.cancelled_at AS "cancelledAt",e.cancel_reason AS "cancelReason",cu.name AS "cancelledByName",fe.amount::text AS amount,fe.id AS "financeEntryId" FROM stock_entries e JOIN feeds f ON f.id=e.feed_id JOIN public.users u ON u.id=e.actor_id LEFT JOIN pens p ON p.id=e.pen_id LEFT JOIN public.users cu ON cu.id=e.cancelled_by LEFT JOIN finance_entries fe ON fe.stock_entry_id=e.id`;
 const conflict = (message: string): never => {
   throw new ApiError(409, "STOCK_CONFLICT", message);
 };
@@ -194,11 +195,18 @@ export async function registerInventoryRoutes(
         kind: z.enum(["IN", "OUT"]),
         date,
         quantity,
+        amount: z.number().int().positive().max(1000000000000).optional(),
         penId: uuid.nullable().default(null),
         notes,
       })
       .strict()
       .parse(r.body);
+    if (b.kind === "OUT" && b.amount !== undefined)
+      throw new ApiError(
+        400,
+        "INVALID_AMOUNT",
+        "Chỉ phiếu nhập kho được ghi tiền mua thức ăn.",
+      );
     if (b.kind === "IN" && b.penId)
       throw new ApiError(
         400,
@@ -240,6 +248,25 @@ export async function registerInventoryRoutes(
             r.account!.id,
           ],
         );
+        if (b.amount !== undefined) {
+          const expense = await c.query<{ id: string }>(
+            "INSERT INTO finance_entries(date,kind,category,amount,content,stock_entry_id,actor_id) VALUES($1,'OUT','FEED',$2,$3,$4,$5) RETURNING id",
+            [
+              b.date,
+              b.amount,
+              `Mua thức ăn nhập kho: ${feed.rows[0].name}`,
+              result.rows[0].id,
+              r.account!.id,
+            ],
+          );
+          await auditFinanceEntry(
+            c,
+            expense.rows[0]!.id,
+            "CREATE",
+            r.account!.id,
+            "Nhập kho thức ăn",
+          );
+        }
         return { entry: result.rows[0] };
       },
       b.requestId,
@@ -272,6 +299,27 @@ export async function registerInventoryRoutes(
           "UPDATE stock_entries SET cancelled_at=clock_timestamp(),cancelled_by=$2,cancel_reason=$3 WHERE id=$1",
           [entry.id, r.account!.id, b.reason],
         );
+        const expense = await c.query(
+          "SELECT * FROM finance_entries WHERE stock_entry_id=$1 FOR UPDATE",
+          [entry.id],
+        );
+        if (expense.rows[0]) {
+          const old = expense.rows[0];
+          if (old.cancelled_at)
+            conflict("Khoản chi của phiếu đã bị hủy; hãy kiểm tra dữ liệu.");
+          await c.query(
+            "UPDATE finance_entries SET cancelled_at=clock_timestamp(),cancelled_by=$2,cancel_reason=$3,updated_at=clock_timestamp() WHERE id=$1",
+            [old.id, r.account!.id, b.reason],
+          );
+          await auditFinanceEntry(
+            c,
+            old.id,
+            "CANCEL",
+            r.account!.id,
+            b.reason,
+            old,
+          );
+        }
         return { ok: true };
       },
       b.requestId,

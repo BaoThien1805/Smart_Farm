@@ -294,7 +294,6 @@ class _AnimalDetailPageState extends State<AnimalDetailPage> {
   Widget quickActions() => LayoutBuilder(
     builder: (context, constraints) {
       final columns = constraints.maxWidth >= 700 ? 4 : 2;
-      final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
       const actionStyle = ButtonStyle(
         minimumSize: WidgetStatePropertyAll(Size(0, 76)),
         padding: WidgetStatePropertyAll(
@@ -317,41 +316,59 @@ class _AnimalDetailPageState extends State<AnimalDetailPage> {
             ),
           );
       final actions = <Widget>[
-        if (widget.canOperate) ...[
+        if (widget.canOperate)
           FilledButton.icon(
             style: tint(FarmColors.sky, FarmColors.blue),
-            onPressed: canAct ? () => event('weights') : null,
-            icon: const Icon(Icons.monitor_weight_outlined),
-            label: const Text('Ghi cân nặng'),
+            onPressed: canAct ? editProfile : null,
+            icon: const Icon(Icons.edit_outlined),
+            label: const Text('Sửa hồ sơ'),
           ),
+        if (widget.canCare)
           OutlinedButton.icon(
             style: tint(FarmColors.peach, FarmColors.coral),
-            onPressed: canAct ? () => event('transfer') : null,
-            icon: const Icon(Icons.home_work_outlined),
-            label: const Text('Chuyển chuồng'),
+            onPressed: canAct ? schedule : null,
+            icon: const Icon(Icons.event_available_outlined),
+            label: const Text('Đặt lịch chăm sóc'),
           ),
-        ],
-        if (widget.canCare)
-          FilledButton.icon(
-            style: tint(FarmColors.lavender, FarmColors.lilac),
-            onPressed: canAct ? () => event('health') : null,
-            icon: const Icon(Icons.health_and_safety_outlined),
-            label: const Text('Ghi sức khỏe'),
-          ),
-        if (widget.canExamine || widget.admin)
+        if (widget.admin) ...[
           FilledButton.icon(
             style: tint(FarmColors.mint, forest),
-            onPressed: canAct ? () => event('exams') : null,
-            icon: const Icon(Icons.medical_services_outlined),
-            label: const Text('Khám thú y'),
+            onPressed: canAct ? sell : null,
+            icon: const Icon(Icons.sell_outlined),
+            label: const Text('Bán vật nuôi'),
           ),
-      ];
-      return Wrap(
-        spacing: 12,
-        runSpacing: 8,
-        children: [
-          for (final action in actions) SizedBox(width: width, child: action),
+          OutlinedButton.icon(
+            style: tint(FarmColors.lavender, FarmColors.lilac),
+            onPressed: canAct ? () => event('death') : null,
+            icon: const Icon(Icons.event_busy_outlined),
+            label: const Text('Ghi nhận chết'),
+          ),
         ],
+      ];
+      if (actions.isEmpty) return const SizedBox.shrink();
+      return FarmInfoCard(
+        key: const ValueKey('profile-actions'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const FarmSectionHeader(title: 'Thao tác hồ sơ'),
+            const SizedBox(height: 12),
+            LayoutBuilder(
+              builder: (context, inner) {
+                final actionWidth =
+                    (inner.maxWidth - (columns - 1) * 12) / columns;
+                return Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    for (final action in actions)
+                      SizedBox(width: actionWidth, child: action),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
       );
     },
   );
@@ -390,54 +407,21 @@ class _AnimalDetailPageState extends State<AnimalDetailPage> {
               Text(
                 a.text('notes').isEmpty ? 'Chưa có ghi chú.' : a.text('notes'),
               ),
+              if (active && widget.admin) ...[
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: IconButton(
+                    tooltip: 'Xóa hồ sơ nhập nhầm',
+                    onPressed: canAct ? remove : null,
+                    icon: const Icon(Icons.delete_outline),
+                    color: FarmColors.danger,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
-        if (active &&
-            (widget.canOperate || widget.canCare || widget.admin)) ...[
-          const SizedBox(height: 16),
-          FarmInfoCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const FarmSectionHeader(title: 'Thao tác hồ sơ'),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 8,
-                  children: [
-                    if (widget.canOperate)
-                      OutlinedButton(
-                        onPressed: canAct ? editProfile : null,
-                        child: const Text('Sửa hồ sơ'),
-                      ),
-                    if (widget.canCare)
-                      OutlinedButton(
-                        onPressed: canAct ? schedule : null,
-                        child: const Text('Đặt lịch chăm sóc'),
-                      ),
-                    if (widget.admin) ...[
-                      FilledButton(
-                        onPressed: canAct ? sell : null,
-                        child: const Text('Bán vật nuôi'),
-                      ),
-                      OutlinedButton(
-                        onPressed: canAct ? () => event('death') : null,
-                        child: const Text('Ghi nhận chết'),
-                      ),
-                      IconButton(
-                        tooltip: 'Xóa hồ sơ nhập nhầm',
-                        onPressed: canAct ? remove : null,
-                        icon: const Icon(Icons.delete_outline),
-                        color: FarmColors.danger,
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
       ],
     );
   }
@@ -500,6 +484,17 @@ class _AnimalDetailPageState extends State<AnimalDetailPage> {
     children: [
       const FarmSectionHeader(title: 'Tăng trưởng (kg)'),
       const SizedBox(height: 16),
+      if (active && widget.canOperate) ...[
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.icon(
+            onPressed: canAct ? () => event('weights') : null,
+            icon: const Icon(Icons.monitor_weight_outlined),
+            label: const Text('Ghi cân nặng'),
+          ),
+        ),
+        const SizedBox(height: 16),
+      ],
       if (controller.items('weights').length >= 2)
         WeightChart(records: controller.items('weights')),
       if (controller.items('weights').isEmpty)
@@ -524,6 +519,27 @@ class _AnimalDetailPageState extends State<AnimalDetailPage> {
     children: [
       const FarmSectionHeader(title: 'Lịch sử sức khỏe'),
       const SizedBox(height: 16),
+      if (active && (widget.canCare || widget.canExamine || widget.admin)) ...[
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          children: [
+            if (widget.canCare)
+              FilledButton.icon(
+                onPressed: canAct ? () => event('health') : null,
+                icon: const Icon(Icons.health_and_safety_outlined),
+                label: const Text('Ghi sức khỏe'),
+              ),
+            if (widget.canExamine || widget.admin)
+              FilledButton.icon(
+                onPressed: canAct ? () => event('exams') : null,
+                icon: const Icon(Icons.medical_services_outlined),
+                label: const Text('Khám thú y'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 16),
+      ],
       if (controller.items('healthRecords').isEmpty)
         const FarmInfoCard(
           color: FarmColors.sky,
@@ -621,6 +637,17 @@ class _AnimalDetailPageState extends State<AnimalDetailPage> {
               'Theo ngày của bản ghi; lịch chưa hoàn thành dùng ngày hẹn.',
         ),
         const SizedBox(height: 16),
+        if (active && widget.canOperate) ...[
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: canAct ? () => event('transfer') : null,
+              icon: const Icon(Icons.home_work_outlined),
+              label: const Text('Chuyển chuồng'),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         if (events.isEmpty)
           const FarmInfoCard(
             color: FarmColors.sky,

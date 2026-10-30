@@ -5,6 +5,7 @@ import '../../core/suggested_code_field.dart';
 import '../../core/theme.dart';
 import '../../core/ui_components.dart';
 import 'farm_repository.dart';
+import 'finance_values.dart';
 import 'inventory_widgets.dart';
 
 enum InventoryFormKind { feed, incoming, outgoing, cancel }
@@ -66,6 +67,7 @@ class _InventoryEditorState extends State<InventoryEditor> {
       'notes',
       'date',
       'quantity',
+      'amount',
       'reason',
     ])
       key: TextEditingController(
@@ -136,6 +138,7 @@ class _InventoryEditorState extends State<InventoryEditor> {
             'kind': outgoing ? 'OUT' : 'IN',
             'date': farmIsoDate(fields['date']!.text),
             'quantity': parseInventoryKg(fields['quantity']!.text)!,
+            if (!outgoing) 'amount': int.parse(fields['amount']!.text.trim()),
             if (outgoing) 'penId': penId,
             'notes': fields['notes']!.text.trim(),
             'requestId': requestId,
@@ -320,6 +323,24 @@ class _InventoryEditorState extends State<InventoryEditor> {
         ],
         dateInput(),
         input('quantity', 'Số lượng (kg)', numeric: true),
+        if (!outgoing) ...[
+          TextFormField(
+            controller: fields['amount'],
+            enabled: !busy,
+            keyboardType: TextInputType.number,
+            decoration: farmInputDecoration(
+              label: 'Tổng tiền mua (VND)',
+              helperText: 'Tổng tiền của cả phiếu nhập. Nhập số nguyên, không tách hàng nghìn.',
+            ),
+            validator: validateVndAmount,
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Lưu phiếu sẽ tự ghi khoản chi Thức ăn trong Thu chi. Không cần ghi chi thêm lần nữa.',
+            style: TextStyle(color: muted),
+          ),
+          const SizedBox(height: 16),
+        ],
         if (balance != null) ...[
           Text(
             'Dự kiến sau ${outgoing ? 'xuất' : 'nhập'}: ${inventoryKg(balance)} kg',
@@ -377,6 +398,12 @@ class _InventoryEditorState extends State<InventoryEditor> {
         const FeedbackBox(
           'Khi xác nhận, phiếu được đánh dấu đã hủy và vẫn giữ trong lịch sử. Tồn kho được điều chỉnh ngược lại; hủy phiếu nhập sẽ bị từ chối nếu gây âm tồn.',
         ),
+        if (e.text('financeEntryId').isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(
+            'Khoản chi mua thức ăn ${vnd(e.values['amount'])} cũng sẽ được hủy.',
+          ),
+        ],
         const SizedBox(height: 20),
         input(
           'reason',

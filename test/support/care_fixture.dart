@@ -100,8 +100,18 @@ class CareFixture extends WorkspaceFixture {
           tasks
               .where(
                 (t) =>
-                    !r.url.queryParameters.containsKey('status') ||
-                    t['status'] == r.url.queryParameters['status'],
+                    (!r.url.queryParameters.containsKey('status') ||
+                        t['status'] == r.url.queryParameters['status']) &&
+                    (r.url.queryParameters['from'] == null ||
+                        (t['dueDate'] as String).compareTo(
+                              r.url.queryParameters['from']!,
+                            ) >=
+                            0) &&
+                    (r.url.queryParameters['to'] == null ||
+                        (t['dueDate'] as String).compareTo(
+                              r.url.queryParameters['to']!,
+                            ) <=
+                            0),
               )
               .toList()
             ..sort(
@@ -168,7 +178,23 @@ class CareFixture extends WorkspaceFixture {
           'error': {'message': writeError},
         }, 409);
       }
-      if (path.endsWith('/care-tasks/batch')) {
+      if (path.endsWith('/care-tasks/batch/complete') ||
+          path.endsWith('/care-tasks/batch/cancel')) {
+        for (final id in body!['taskIds'] as List) {
+          final task = tasks.firstWhere((t) => t['id'] == id);
+          task['status'] = path.endsWith('/complete') ? 'DONE' : 'CANCELLED';
+          if (path.endsWith('/complete')) {
+            task['actualDate'] = body['date'];
+            healthRecords.add({
+              'id': 'result-$id',
+              ...body,
+              'taskId': id,
+              'content': task['title'],
+              'actorName': 'Bác sĩ thực hiện',
+            });
+          }
+        }
+      } else if (path.endsWith('/care-tasks/batch')) {
         for (final id in body!['animalIds'] as List) {
           final animal = animals.firstWhere((a) => a['id'] == id);
           tasks.add({

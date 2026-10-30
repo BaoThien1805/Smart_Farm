@@ -105,6 +105,9 @@ Future<void> openInventory(WidgetTester t, InventoryFormKind kind) async {
   } else {
     await chooseFeed(t);
     await fillInventory(t, 'Số lượng (kg)', '0,125');
+    if (kind == InventoryFormKind.incoming) {
+      await fillInventory(t, 'Tổng tiền mua (VND)', '250000');
+    }
   }
 }
 
@@ -137,6 +140,43 @@ void main() {
     TestWidgetsFlutterBinding.ensureInitialized();
     setUpAll(loadUiPreviewFonts);
   }
+  testWidgets(
+    'intake requires whole VND and retains the amount after a server error',
+    (t) async {
+      final fixture = InventoryFixture();
+      await mountInventory(t, fixture, width: 360);
+      await openInventory(t, InventoryFormKind.incoming);
+      for (final value in [
+        '',
+        '0',
+        '-1',
+        '1.5',
+        '1,5',
+        '1.000',
+        'NaN',
+        '1000000000001',
+      ]) {
+        await fillInventory(t, 'Tổng tiền mua (VND)', value);
+        await tapInventory(t, save('Lưu phiếu nhập'));
+        expect(fixture.writes, isEmpty);
+      }
+      fixture.writeError = 'Chưa lưu được phiếu nhập.';
+      await fillInventory(t, 'Tổng tiền mua (VND)', '125000');
+      await tapInventory(t, save('Lưu phiếu nhập'));
+      expect(find.text('Chưa lưu được phiếu nhập.'), findsOneWidget);
+      expect(
+        t.widget<TextFormField>(input('Tổng tiền mua (VND)')).controller!.text,
+        '125000',
+      );
+      final requestId = fixture.bodies.last!['requestId'];
+      fixture.writeError = null;
+      await tapInventory(t, save('Lưu phiếu nhập'));
+      expect(fixture.bodies.last!['amount'], 125000);
+      expect(fixture.bodies.last!['requestId'], requestId);
+      expect(t.takeException(), isNull);
+    },
+  );
+
   for (final role in ['ADMIN', 'STAFF', 'VET', 'ACCOUNTANT']) {
     testWidgets('$role retains inventory read/write/history permissions', (
       t,
@@ -271,6 +311,14 @@ void main() {
         await tapInventory(t, save(action(kind)));
         final body = fixture.bodies.single!;
         expect(body['quantity'], 0.125);
+        if (kind == InventoryFormKind.incoming) {
+          expect(body['amount'], 250000);
+          expect(body['amount'], isA<int>());
+          await history(t);
+          expect(inEntry('created', 'Tiền mua: 250.000 ₫'), findsOneWidget);
+        } else {
+          expect(body.containsKey('amount'), isFalse);
+        }
         expect(body['requestId'], matches(RegExp(r'^[0-9a-f-]{36}$')));
         expect(body.containsKey('penId'), kind == InventoryFormKind.outgoing);
         if (kind == InventoryFormKind.outgoing) expect(body['penId'], isNull);

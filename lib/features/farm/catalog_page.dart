@@ -117,6 +117,7 @@ class _CatalogPageState extends State<CatalogPage> {
     final requiredCode = editKind == 'pens';
     setState(() => busy = true);
     PenIconChoice? iconChoice;
+    bool areaCreated = false;
     final fields = [
       FarmField(
         'code',
@@ -138,6 +139,41 @@ class _CatalogPageState extends State<CatalogPage> {
           'Khu vực',
           initial: item?.text('areaId') ?? areaId,
           options: recordOptions(controller.catalog('areas')),
+          createOptionLabel: 'Thêm khu vực',
+          createOption: (formContext) async {
+            FarmRecord? created;
+            final saved = await farmForm(
+              formContext,
+              title: 'Thêm khu vực',
+              codeApi: widget.repository.api,
+              codeKind: 'areas',
+              fields: const [
+                FarmField('code', 'Mã khu vực', requiredValue: false),
+                FarmField('name', 'Tên khu vực'),
+              ],
+              save: (body) async {
+                final data = await widget.repository.api.request(
+                  'POST',
+                  '/farm/areas',
+                  body: body,
+                );
+                final item = data['item'];
+                if (item is! Map ||
+                    item['id'] is! String ||
+                    (item['id'] as String).isEmpty) {
+                  throw const ApiException(
+                    'Không nhận được khu vực vừa tạo. Vui lòng tải lại danh mục.',
+                  );
+                }
+                created = FarmRecord({
+                  ...body,
+                  ...Map<String, dynamic>.from(item),
+                });
+                areaCreated = true;
+              },
+            );
+            return saved ? created : null;
+          },
         ),
         FarmField(
           'capacity',
@@ -194,7 +230,7 @@ class _CatalogPageState extends State<CatalogPage> {
             ),
             if (editKind == 'pens' && controller.catalog('areas').isEmpty)
               const Text(
-                'Cần thêm khu vực trong Danh mục trước khi tạo chuồng.',
+                'Chưa có khu vực. Chọn “Thêm khu vực” bên dưới để tạo ngay.',
               ),
             if (editKind == 'breeds' && controller.catalog('species').isEmpty)
               const Text('Cần thêm loài trong Danh mục trước khi tạo giống.'),
@@ -210,7 +246,7 @@ class _CatalogPageState extends State<CatalogPage> {
           },
         ),
       );
-      if (saved && mounted) load();
+      if ((saved || areaCreated) && mounted) await load();
     } finally {
       if (mounted) setState(() => busy = false);
     }

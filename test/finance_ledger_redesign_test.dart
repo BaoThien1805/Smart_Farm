@@ -292,6 +292,51 @@ void main() {
     },
   );
   testWidgets(
+    'stock purchase expense shows its source and blocks manual changes',
+    (t) async {
+      final fixture = FinanceLedgerFixture('ACCOUNTANT');
+      fixture.entries.add({
+        'id': 'stock-purchase',
+        'date': '2026-10-24',
+        'kind': 'OUT',
+        'category': 'FEED',
+        'amount': '250000',
+        'content': 'Mua thức ăn nhập kho: Cám',
+        'actorName': 'Nhân viên kho',
+        'stockEntryId': 'stock-1',
+        'cancelledAt': null,
+      });
+      await mountLedger(t, fixture);
+      expect(ledgerAction('stock-purchase', 'Sửa'), findsNothing);
+      expect(ledgerAction('stock-purchase', 'Hủy khoản'), findsNothing);
+      expect(ledgerAction('stock-purchase', 'Lịch sử'), findsOneWidget);
+      expect(
+        ledgerAction(
+          'stock-purchase',
+          'Từ nhập kho thức ăn. Hủy khoản chi qua phiếu nhập kho.',
+        ),
+        findsOneWidget,
+      );
+      final entry = FarmRecord(fixture.entries.last);
+      final context = t.element(find.byType(FinancePage));
+      expect(
+        await financeLedgerForm(context, fixture.repository, entry: entry),
+        isFalse,
+      );
+      expect(
+        await financeLedgerForm(
+          context,
+          fixture.repository,
+          entry: entry,
+          cancelling: true,
+        ),
+        isFalse,
+      );
+      expect(fixture.writes, isEmpty);
+      expect(t.takeException(), isNull);
+    },
+  );
+  testWidgets(
     'cancel requires reason, keeps history, refreshes totals and last valid page',
     (t) async {
       final fixture = FinanceLedgerFixture();

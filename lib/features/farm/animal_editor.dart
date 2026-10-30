@@ -55,6 +55,8 @@ class _AnimalEditorState extends State<AnimalEditor> {
   bool catalogError = false;
   bool batchMode = false;
   final quantity = TextEditingController(text: '1');
+  final weightKg = TextEditingController();
+  final weightDate = TextEditingController(text: farmDate(farmToday()));
   late final requestId = FarmRepository.requestId();
   bool get batch => widget.animal == null && batchMode;
   int? get count => int.tryParse(quantity.text.trim());
@@ -116,6 +118,8 @@ class _AnimalEditorState extends State<AnimalEditor> {
   @override
   void dispose() {
     quantity.dispose();
+    weightKg.dispose();
+    weightDate.dispose();
     for (final c in fields.values) {
       c.dispose();
     }
@@ -359,6 +363,17 @@ class _AnimalEditorState extends State<AnimalEditor> {
       if (widget.animal == null) 'penId': penId,
       if (photo != null) 'photoBase64': base64Encode(photo!),
       if (removePhoto) 'photoBase64': null,
+      if (weightKg.text.trim().isNotEmpty) ...{
+        'weight': {
+          'kg': num.parse(weightKg.text.trim().replaceAll(',', '.')),
+          'date': farmIsoDate(
+            widget.animal == null
+                ? fields['arrivalDate']!.text
+                : weightDate.text,
+          ),
+        },
+        'requestId': requestId,
+      },
     };
     if (body['birthDate'] == '') body['birthDate'] = null;
     if (batch) {
@@ -501,6 +516,75 @@ class _AnimalEditorState extends State<AnimalEditor> {
         Text(description, style: const TextStyle(color: muted)),
       ],
     ),
+  );
+
+  Widget weightInputs(bool creating) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Divider(height: 32),
+      section(
+        'Cân nặng',
+        Icons.monitor_weight_outlined,
+        creating
+            ? batch
+                  ? 'Tùy chọn. Ghi cân nặng này cho mỗi con theo ngày nhập đàn.'
+                  : 'Tùy chọn. Cân nặng ban đầu được lưu theo ngày nhập đàn.'
+            : 'Tùy chọn. Ghi một lần cân mới cùng hồ sơ, mỗi ngày một lần; lịch sử cân cũ được giữ nguyên.',
+      ),
+      TextFormField(
+        controller: weightKg,
+        enabled: !busy && !loading && !selectingPhoto,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: farmInputDecoration(
+          label: creating ? 'Cân nặng ban đầu (kg)' : 'Cân nặng mới (kg)',
+          helperText: 'Để trống nếu chưa cân. Tối đa 3 chữ số thập phân.',
+        ),
+        onChanged: (_) => setState(() {}),
+        validator: (text) {
+          final value = (text ?? '').trim();
+          if (value.isEmpty) return null;
+          final kg = num.tryParse(value.replaceAll(',', '.'));
+          if (kg == null || !kg.isFinite || kg <= 0 || kg > 100000) {
+            return 'Nhập cân nặng lớn hơn 0, tối đa 100.000 kg.';
+          }
+          if ((kg * 1000 - (kg * 1000).round()).abs() >= 1e-7) {
+            return 'Tối đa 3 chữ số thập phân.';
+          }
+          return null;
+        },
+      ),
+      if (!creating && weightKg.text.trim().isNotEmpty) ...[
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: weightDate,
+          readOnly: true,
+          enabled: !busy && !loading && !selectingPhoto,
+          decoration: farmInputDecoration(
+            label: 'Ngày cân',
+            suffixIcon: const Icon(Icons.calendar_today_outlined),
+          ),
+          onTap: () async {
+            final selected = await showDatePicker(
+              context: context,
+              initialDate: farmParseDate(weightDate.text) ?? DateTime.now(),
+              firstDate:
+                  farmParseDate(widget.animal!.text('arrivalDate')) ??
+                  DateTime(1900),
+              lastDate: DateTime.now(),
+            );
+            if (selected != null && mounted) {
+              weightDate.text = farmDate(
+                selected.toIso8601String().substring(0, 10),
+              );
+            }
+          },
+          validator: (value) => farmParseDate(value ?? '') == null
+              ? 'Ngày cân không hợp lệ.'
+              : null,
+        ),
+      ],
+      const SizedBox(height: 16),
+    ],
   );
 
   Widget photoCard(String existing, FarmRecord? species) => Container(
@@ -769,6 +853,7 @@ class _AnimalEditorState extends State<AnimalEditor> {
               dropdown('Giới tính', gender, {
                 for (final g in ['MALE', 'FEMALE', 'UNKNOWN']) g: label(g),
               }, (v) => setState(() => gender = v!)),
+              weightInputs(creating),
               const Divider(height: 32),
               section(
                 'Ngày & nguồn gốc',
@@ -792,7 +877,7 @@ class _AnimalEditorState extends State<AnimalEditor> {
                 Icons.home_work_outlined,
                 creating
                     ? 'Chọn chuồng đang hoạt động và còn chỗ. Khu vực chỉ dùng để lọc chuồng.'
-                    : 'Muốn đổi chuồng, dùng Chuyển chuồng trong hồ sơ để lưu lịch sử.',
+                    : 'Muốn đổi chuồng, dùng Chuyển chuồng trong tab Lịch sử của hồ sơ để lưu lịch sử.',
               ),
               if (creating) ...[
                 if (!loading && !catalogError && availablePens.isEmpty)

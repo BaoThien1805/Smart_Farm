@@ -33,9 +33,22 @@ coverage/
 
 # Exported files and local tooling
 /outputs/
+/output/
+/docs/
+/test/preview/
+/backend/scripts/preview.ts
 /.agents/
 /.codegraph/
+.codex/
+.claude/
+AGENTS.md
+SKILL.md
+CLAUDE.md
+GEMINI.md
 /tmp/
+*.docx
+*.pptx
+*.xlsx
 *.apk
 *.aab
 *.jks

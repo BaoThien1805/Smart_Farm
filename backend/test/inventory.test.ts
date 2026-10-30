@@ -148,6 +148,424 @@ const getStock = async () =>
   (await send("GET", "/api/feeds"))
     .json()
     .feeds.find((f: { id: string }) => f.id === feedId).stock;
+
+test("migration 15 preserves legacy intake and existing manual expenses without inventing costs", async () => {
+  const owner = await app.inject({
+    method: "POST",
+    url: "/api/auth/register",
+    payload: {
+      name: "Chủ kho cũ",
+      farmName: "Trang trại cũ",
+      email: "legacy-stock@test.local",
+      password: adminPassword,
+    },
+  });
+  assert.equal(owner.statusCode, 201, owner.body);
+  const token = owner.json().token;
+  const feed = (
+    await send(
+      "POST",
+      "/api/feeds",
+      { code: "OLD", name: "Cám cũ", lowStock: 0 },
+      token,
+    )
+  ).json().feed.id;
+  const stock = await send(
+    "POST",
+    "/api/stock-entries",
+    { ...entry("IN", 3), feedId: feed },
+    token,
+  );
+  assert.equal(stock.statusCode, 200, stock.body);
+  const manualExpense = await send(
+    "POST",
+    "/api/finance/entries",
+    {
+      requestId: randomUUID(),
+      date: now,
+      kind: "OUT",
+      category: "FEED",
+      amount: 5000,
+      content: "Chi đã ghi trước cập nhật",
+    },
+    token,
+  );
+  assert.equal(manualExpense.statusCode, 200, manualExpense.body);
+  for (const farm of (
+    await pool.query<{ schema_name: string }>(
+      "SELECT schema_name FROM public.farms",
+    )
+  ).rows) {
+    assert.match(farm.schema_name, /^(public|farm_[a-f0-9]{32})$/);
+    await pool.query(
+      `ALTER TABLE "${farm.schema_name}".finance_entries DROP COLUMN stock_entry_id`,
+    );
+  }
+  await pool.query("DELETE FROM public.schema_migrations WHERE version=15");
+  await migrate(pool);
+  await migrate(pool);
+  const history = (
+    await send("GET", "/api/stock-entries", undefined, token)
+  ).json();
+  assert.equal(history.entries[0].id, stock.json().entry.id);
+  assert.equal(history.entries[0].amount, null);
+  const report = (
+    await send(
+      "GET",
+      `/api/finance/report?from=${now}&to=${now}`,
+      undefined,
+      token,
+    )
+  ).json();
+  assert.equal(report.summary.expense, "5000");
+  assert.equal(
+    (await send("GET", "/api/finance/entries", undefined, token)).json().total,
+    1,
+  );
+});
+
+test("priced intake creates exactly one linked expense and audit on concurrent retry", async () => {
+  const feed = (
+    await send("POST", "/api/feeds", {
+      code: "COST",
+      name: "Cám mua",
+      lowStock: 0,
+    })
+  ).json().feed.id;
+  const payload = { ...entry("IN", 20), feedId: feed, amount: 250000 };
+  const responses = await Promise.all([
+    send("POST", "/api/stock-entries", payload, staffToken),
+    send("POST", "/api/stock-entries", payload, staffToken),
+  ]);
+  for (const response of responses)
+    assert.equal(response.statusCode, 200, response.body);
+  const stockId = responses[0]!.json().entry.id;
+  assert.equal(responses[1]!.json().entry.id, stockId);
+  const expenses = await pool.query(
+    "SELECT * FROM finance_entries WHERE stock_entry_id=$1",
+    [stockId],
+  );
+  assert.equal(expenses.rowCount, 1);
+  const expense = expenses.rows[0];
+  assert.equal(expense.kind, "OUT");
+  assert.equal(expense.category, "FEED");
+  assert.equal(expense.amount, "250000");
+  assert.equal(expense.actor_id, staffId);
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*)::int AS n FROM finance_audit WHERE entry_id=$1",
+        [expense.id],
+      )
+    ).rows[0].n,
+    1,
+  );
+  const history = (
+    await send(
+      "GET",
+      `/api/stock-entries?feedId=${feed}`,
+      undefined,
+      staffToken,
+    )
+  ).json();
+  assert.equal(history.entries[0].amount, "250000");
+  assert.equal(history.entries[0].financeEntryId, expense.id);
+  const ledger = (
+    await send(
+      "GET",
+      `/api/finance/entries?from=${now}&to=${now}&category=FEED`,
+    )
+  ).json();
+  assert.equal(
+    ledger.entries.find((e: { id: string }) => e.id === expense.id)
+      .stockEntryId,
+    stockId,
+  );
+  const report = (
+    await send("GET", `/api/finance/report?from=${now}&to=${now}&category=FEED`)
+  ).json();
+  assert.equal(report.summary.expense, "250000");
+  assert.equal(
+    (await send("GET", "/api/finance/entries", undefined, staffToken))
+      .statusCode,
+    403,
+  );
+  assert.equal(
+    (
+      await send(
+        "POST",
+        "/api/stock-entries",
+        { ...payload, amount: 300000 },
+        staffToken,
+      )
+    ).statusCode,
+    409,
+  );
+});
+
+test("purchase amount is a positive integer for intake only; legacy requests remain valid", async () => {
+  const feed = (await pool.query("SELECT id FROM feeds WHERE code='COST'"))
+    .rows[0].id;
+  for (const amount of [0, -1, 1.5, 1000000000001, null, "250000"]) {
+    const response = await send("POST", "/api/stock-entries", {
+      ...entry("IN", 1),
+      feedId: feed,
+      amount,
+    });
+    assert.equal(response.statusCode, 400, response.body);
+  }
+  assert.equal(
+    (
+      await send("POST", "/api/stock-entries", {
+        ...entry("OUT", 1),
+        feedId: feed,
+        amount: 1000,
+      })
+    ).statusCode,
+    400,
+  );
+  const legacy = await send("POST", "/api/stock-entries", {
+    ...entry("IN", 1),
+    feedId: feed,
+  });
+  assert.equal(legacy.statusCode, 200, legacy.body);
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*)::int AS n FROM finance_entries WHERE stock_entry_id=$1",
+        [legacy.json().entry.id],
+      )
+    ).rows[0].n,
+    0,
+  );
+});
+
+test("stock expense cannot be edited separately; stock and expense cancellation are atomic and idempotent", async () => {
+  const feed = (
+    await send("POST", "/api/feeds", {
+      code: "CANCEL-COST",
+      name: "Cám hủy",
+      lowStock: 0,
+    })
+  ).json().feed.id;
+  const purchase = await send("POST", "/api/stock-entries", {
+    ...entry("IN", 10),
+    feedId: feed,
+    amount: 100000,
+  });
+  assert.equal(purchase.statusCode, 200, purchase.body);
+  const stockId = purchase.json().entry.id;
+  const expense = (
+    await pool.query("SELECT * FROM finance_entries WHERE stock_entry_id=$1", [
+      stockId,
+    ])
+  ).rows[0];
+  assert.equal(
+    (
+      await send("PATCH", `/api/finance/entries/${expense.id}`, {
+        requestId: randomUUID(),
+        reason: "Sửa riêng",
+        date: now,
+        kind: "OUT",
+        category: "FEED",
+        amount: 90000,
+        content: "Đổi tiền",
+      })
+    ).statusCode,
+    409,
+  );
+  assert.equal(
+    (
+      await send("POST", `/api/finance/entries/${expense.id}/cancel`, {
+        requestId: randomUUID(),
+        reason: "Hủy riêng",
+      })
+    ).statusCode,
+    409,
+  );
+  const outgoing = await send("POST", "/api/stock-entries", {
+    ...entry("OUT", 2),
+    feedId: feed,
+  });
+  const cancel = { requestId: randomUUID(), reason: "Nhập sai cả phiếu" };
+  assert.equal(
+    (await send("POST", `/api/stock-entries/${stockId}/cancel`, cancel))
+      .statusCode,
+    409,
+  );
+  assert.equal(
+    (
+      await pool.query("SELECT cancelled_at FROM finance_entries WHERE id=$1", [
+        expense.id,
+      ])
+    ).rows[0].cancelled_at,
+    null,
+  );
+  await send("POST", `/api/stock-entries/${outgoing.json().entry.id}/cancel`, {
+    requestId: randomUUID(),
+    reason: "Hủy xuất",
+  });
+  assert.equal(
+    (await send("POST", `/api/stock-entries/${stockId}/cancel`, cancel))
+      .statusCode,
+    200,
+  );
+  assert.equal(
+    (await send("POST", `/api/stock-entries/${stockId}/cancel`, cancel))
+      .statusCode,
+    200,
+  );
+  assert.ok(
+    (
+      await pool.query("SELECT cancelled_at FROM stock_entries WHERE id=$1", [
+        stockId,
+      ])
+    ).rows[0].cancelled_at,
+  );
+  assert.ok(
+    (
+      await pool.query("SELECT cancelled_at FROM finance_entries WHERE id=$1", [
+        expense.id,
+      ])
+    ).rows[0].cancelled_at,
+  );
+  const audits = (
+    await send("GET", `/api/finance/entries/${expense.id}/history`)
+  ).json().history;
+  assert.deepEqual(
+    audits.map((a: { action: string }) => a.action),
+    ["CREATE", "CANCEL"],
+  );
+  const report = (
+    await send("GET", `/api/finance/report?from=${now}&to=${now}&category=FEED`)
+  ).json();
+  assert.equal(report.summary.expense, "250000");
+});
+
+test("failed finance write rolls back inventory and request receipt", async () => {
+  const feed = (
+    await send("POST", "/api/feeds", {
+      code: "FAIL-COST",
+      name: "Cám rollback",
+      lowStock: 0,
+    })
+  ).json().feed.id;
+  const payload = { ...entry("IN", 5), feedId: feed, amount: 50000 };
+  await pool.query(
+    `CREATE FUNCTION fail_stock_expense() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Injected expense failure'; END $$; CREATE TRIGGER fail_stock_expense BEFORE INSERT ON finance_entries FOR EACH ROW WHEN (NEW.stock_entry_id IS NOT NULL) EXECUTE FUNCTION fail_stock_expense()`,
+  );
+  try {
+    assert.equal(
+      (await send("POST", "/api/stock-entries", payload)).statusCode,
+      500,
+    );
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM stock_entries WHERE feed_id=$1",
+          [feed],
+        )
+      ).rows[0].n,
+      0,
+    );
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM farm_operations WHERE request_id=$1",
+          [payload.requestId],
+        )
+      ).rows[0].n,
+      0,
+    );
+  } finally {
+    await pool.query(
+      "DROP TRIGGER fail_stock_expense ON finance_entries; DROP FUNCTION fail_stock_expense()",
+    );
+  }
+  const retried = await send("POST", "/api/stock-entries", payload);
+  assert.equal(retried.statusCode, 200, retried.body);
+  await pool.query(
+    `CREATE FUNCTION fail_stock_cancel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Injected cancel failure'; END $$; CREATE TRIGGER fail_stock_cancel BEFORE UPDATE ON finance_entries FOR EACH ROW WHEN (NEW.stock_entry_id IS NOT NULL) EXECUTE FUNCTION fail_stock_cancel()`,
+  );
+  try {
+    assert.equal(
+      (
+        await send(
+          "POST",
+          `/api/stock-entries/${retried.json().entry.id}/cancel`,
+          { requestId: randomUUID(), reason: "Rollback hủy" },
+        )
+      ).statusCode,
+      500,
+    );
+    assert.equal(
+      (
+        await pool.query("SELECT cancelled_at FROM stock_entries WHERE id=$1", [
+          retried.json().entry.id,
+        ])
+      ).rows[0].cancelled_at,
+      null,
+    );
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT cancelled_at FROM finance_entries WHERE stock_entry_id=$1",
+          [retried.json().entry.id],
+        )
+      ).rows[0].cancelled_at,
+      null,
+    );
+  } finally {
+    await pool.query(
+      "DROP TRIGGER fail_stock_cancel ON finance_entries; DROP FUNCTION fail_stock_cancel()",
+    );
+  }
+});
+
+test("newly registered farm supports purchase expenses in its isolated schema", async () => {
+  const registration = await app.inject({
+    method: "POST",
+    url: "/api/auth/register",
+    payload: {
+      name: "Chủ kho mới",
+      farmName: "Trang trại kho mới",
+      email: `stock-${randomUUID()}@test.local`,
+      password: adminPassword,
+    },
+  });
+  assert.equal(registration.statusCode, 201, registration.body);
+  const token = registration.json().token;
+  const feed = (
+    await send(
+      "POST",
+      "/api/feeds",
+      { code: "ISOLATED", name: "Cám mới", lowStock: 0 },
+      token,
+    )
+  ).json().feed.id;
+  const purchase = await send(
+    "POST",
+    "/api/stock-entries",
+    { ...entry("IN", 1), feedId: feed, amount: 12000 },
+    token,
+  );
+  assert.equal(purchase.statusCode, 200, purchase.body);
+  const report = (
+    await send(
+      "GET",
+      `/api/finance/report?from=${now}&to=${now}`,
+      undefined,
+      token,
+    )
+  ).json();
+  assert.equal(report.summary.expense, "12000");
+  assert.equal(
+    (
+      await send("GET", `/api/stock-entries?feedId=${feed}`, undefined, token)
+    ).json().entries[0].amount,
+    "12000",
+  );
+});
 test("feed CRUD permissions and input precision", async () => {
   assert.equal(
     (

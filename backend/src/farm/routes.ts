@@ -37,6 +37,14 @@ export const today = () =>
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
+const weightKg = z
+  .number()
+  .positive()
+  .max(100000)
+  .refine(
+    (value) => Math.abs(value * 1000 - Math.round(value * 1000)) < 1e-7,
+    "Tối đa ba chữ số thập phân.",
+  );
 const animalBody = z
   .object({
     photoBase64: z.string().min(1).max(1398104).nullable().optional(),
@@ -49,6 +57,8 @@ const animalBody = z
     origin: notes,
     notes,
     penId: uuid,
+    weight: z.object({ kg: weightKg, date }).strict().optional(),
+    requestId: uuid.optional(),
   })
   .strict();
 const health = z.enum(["NORMAL", "NEEDS_CARE"]);
@@ -83,6 +93,28 @@ export async function animal(c: PoolClient, id: string, active = true) {
 export function actualDate(value: string, arrival: string) {
   if (value > today() || value < arrival)
     fail("Ngày phải từ ngày nhập đàn đến hôm nay.", "INVALID_DATE");
+}
+async function recordProfileWeight(
+  client: PoolClient,
+  animalId: string,
+  arrivalDate: string,
+  weight: { kg: number; date: string } | undefined,
+  actorId: string,
+) {
+  if (!weight) return;
+  actualDate(weight.date, arrivalDate);
+  const existing = await client.query(
+    "SELECT 1 FROM weights WHERE animal_id=$1 AND date=$2",
+    [animalId, weight.date],
+  );
+  if (existing.rowCount)
+    fail(
+      "Đã có lần cân vào ngày này. Hãy chọn ngày khác; lịch sử cân cũ được giữ nguyên.",
+    );
+  await client.query(
+    "INSERT INTO weights(animal_id,date,kg,notes,actor_id) VALUES($1,$2,$3,$4,$5)",
+    [animalId, weight.date, weight.kg, "Ghi từ hồ sơ vật nuôi", actorId],
+  );
 }
 export async function capacity(
   c: PoolClient,
@@ -455,25 +487,37 @@ export async function registerFarmRoutes(
     actualDate(b.arrivalDate, b.birthDate ?? b.arrivalDate);
     if (b.birthDate && b.birthDate > b.arrivalDate)
       fail("Ngày sinh phải trước hoặc bằng ngày nhập đàn.");
-    return write(r, b, async (c) => {
-      await capacity(c, b.penId);
-      const result = await c.query(
-        "INSERT INTO animals(code,breed_id,gender,birth_date,arrival_date,origin,notes,pen_id,name,image_data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
-        [
-          b.code,
-          b.breedId,
-          b.gender,
-          b.birthDate,
+    return write(
+      r,
+      b,
+      async (c) => {
+        await capacity(c, b.penId);
+        const result = await c.query(
+          "INSERT INTO animals(code,breed_id,gender,birth_date,arrival_date,origin,notes,pen_id,name,image_data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
+          [
+            b.code,
+            b.breedId,
+            b.gender,
+            b.birthDate,
+            b.arrivalDate,
+            b.origin,
+            b.notes,
+            b.penId,
+            b.name,
+            image,
+          ],
+        );
+        await recordProfileWeight(
+          c,
+          result.rows[0].id,
           b.arrivalDate,
-          b.origin,
-          b.notes,
-          b.penId,
-          b.name,
-          image,
-        ],
-      );
-      return { animal: result.rows[0] };
-    });
+          b.weight,
+          r.account!.id,
+        );
+        return { animal: result.rows[0] };
+      },
+      b.requestId,
+    );
   });
   app.post(
     "/api/animals/batch/create",
@@ -531,6 +575,19 @@ export async function registerFarmRoutes(
               image,
             ],
           );
+          if (b.weight) {
+            actualDate(b.weight.date, b.arrivalDate);
+            await c.query(
+              "INSERT INTO weights(animal_id,date,kg,notes,actor_id) SELECT id,$2::date,$3,$4,$5::uuid FROM unnest($1::uuid[]) AS input(id)",
+              [
+                result.rows.map((created) => created.id),
+                b.weight.date,
+                b.weight.kg,
+                "Ghi từ hồ sơ vật nuôi",
+                r.account!.id,
+              ],
+            );
+          }
           return {
             count: result.rowCount,
             animals: result.rows,
@@ -551,41 +608,53 @@ export async function registerFarmRoutes(
         ? await normalizeAnimalImage(b.photoBase64)
         : null;
       const id = idOf(r);
-      return write(r, b, async (c) => {
-        const a = await animal(c, id);
-        actualDate(b.arrivalDate, b.birthDate ?? b.arrivalDate);
-        if (a.arrival_date !== b.arrivalDate)
-          fail("Không đổi ngày nhập đàn sau khi tạo hồ sơ.");
-        const oldBreed = await c.query(
-          "SELECT species_id FROM breeds WHERE id=$1",
-          [a.breed_id],
-        );
-        const newBreed = await c.query(
-          "SELECT species_id FROM breeds WHERE id=$1",
-          [b.breedId],
-        );
-        if (
-          !newBreed.rows[0] ||
-          newBreed.rows[0].species_id !== oldBreed.rows[0].species_id
-        )
-          fail("Giống phải thuộc loài ban đầu.");
-        await c.query(
-          "UPDATE animals SET code=$2,breed_id=$3,gender=$4,birth_date=$5,origin=$6,notes=$7,name=$8,image_data=CASE WHEN $9::boolean THEN $10::text ELSE image_data END WHERE id=$1",
-          [
+      return write(
+        r,
+        b,
+        async (c) => {
+          const a = await animal(c, id);
+          actualDate(b.arrivalDate, b.birthDate ?? b.arrivalDate);
+          if (a.arrival_date !== b.arrivalDate)
+            fail("Không đổi ngày nhập đàn sau khi tạo hồ sơ.");
+          const oldBreed = await c.query(
+            "SELECT species_id FROM breeds WHERE id=$1",
+            [a.breed_id],
+          );
+          const newBreed = await c.query(
+            "SELECT species_id FROM breeds WHERE id=$1",
+            [b.breedId],
+          );
+          if (
+            !newBreed.rows[0] ||
+            newBreed.rows[0].species_id !== oldBreed.rows[0].species_id
+          )
+            fail("Giống phải thuộc loài ban đầu.");
+          await c.query(
+            "UPDATE animals SET code=$2,breed_id=$3,gender=$4,birth_date=$5,origin=$6,notes=$7,name=$8,image_data=CASE WHEN $9::boolean THEN $10::text ELSE image_data END WHERE id=$1",
+            [
+              id,
+              b.code,
+              b.breedId,
+              b.gender,
+              b.birthDate,
+              b.origin,
+              b.notes,
+              b.name,
+              b.photoBase64 !== undefined,
+              image,
+            ],
+          );
+          await recordProfileWeight(
+            c,
             id,
-            b.code,
-            b.breedId,
-            b.gender,
-            b.birthDate,
-            b.origin,
-            b.notes,
-            b.name,
-            b.photoBase64 !== undefined,
-            image,
-          ],
-        );
-        return { ok: true };
-      });
+            a.arrival_date,
+            b.weight,
+            r.account!.id,
+          );
+          return { ok: true };
+        },
+        b.requestId,
+      );
     },
   );
   app.get("/api/animals/:id", read, async (r) => {
@@ -872,15 +941,29 @@ export async function registerFarmRoutes(
         status: z.enum(["PENDING", "DONE", "CANCELLED"]).optional(),
         animalId: uuid.optional(),
         speciesIds: speciesFilter,
+        from: date.optional(),
+        to: date.optional(),
         page: z.coerce.number().int().min(1).max(100000).default(1),
         pageSize: z.coerce.number().int().min(1).max(100).default(20),
       })
       .parse(r.query);
+    if (q.from && q.to && q.from > q.to)
+      throw new ApiError(
+        400,
+        "INVALID_RANGE",
+        "Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.",
+      );
     const where =
-      " WHERE ($1::text IS NULL OR t.status=$1) AND ($2::uuid IS NULL OR t.animal_id=$2) AND ($3::uuid[] IS NULL OR t.animal_id IN (SELECT ax.id FROM animals ax JOIN breeds bx ON bx.id=ax.breed_id WHERE bx.species_id=ANY($3)))";
-    const args = [q.status ?? null, q.animalId ?? null, q.speciesIds ?? null];
+      " WHERE ($1::text IS NULL OR t.status=$1) AND ($2::uuid IS NULL OR t.animal_id=$2) AND ($3::uuid[] IS NULL OR t.animal_id IN (SELECT ax.id FROM animals ax JOIN breeds bx ON bx.id=ax.breed_id WHERE bx.species_id=ANY($3))) AND ($4::date IS NULL OR t.due_date >= $4) AND ($5::date IS NULL OR t.due_date <= $5)";
+    const args = [
+      q.status ?? null,
+      q.animalId ?? null,
+      q.speciesIds ?? null,
+      q.from ?? null,
+      q.to ?? null,
+    ];
     const result = await pool.query(
-      `${careSelect}${where} ORDER BY t.due_date,t.id LIMIT $4 OFFSET $5`,
+      `${careSelect}${where} ORDER BY t.due_date,t.id LIMIT $6 OFFSET $7`,
       [...args, q.pageSize, (q.page - 1) * q.pageSize],
     );
     const total = await pool.query(
@@ -973,37 +1056,80 @@ export async function registerFarmRoutes(
       return { ok: true };
     });
   });
+  const completionBody = eventBody.extend({ status: health });
+  async function completeTask(
+    c: PoolClient,
+    taskId: string,
+    b: z.infer<typeof completionBody>,
+    actorId: string,
+  ) {
+    const t = await pending(c, taskId);
+    const a = await animal(c, t.animal_id);
+    actualDate(b.date, a.arrival_date);
+    await c.query(
+      "UPDATE care_tasks SET status='DONE',actual_date=$2 WHERE id=$1",
+      [t.id, b.date],
+    );
+    await c.query(
+      "INSERT INTO health_records(animal_id,date,content,status,notes,task_id,actor_id) VALUES($1,$2,$3,$4,$5,$6,$7)",
+      [t.animal_id, b.date, t.title, b.status, b.notes, t.id, actorId],
+    );
+    await updateHealth(c, t.animal_id);
+  }
   app.post("/api/care-tasks/:id/complete", examine, async (r) => {
-    const b = eventBody.extend({ status: health }).parse(r.body);
+    const b = completionBody.parse(r.body);
     return write(
       r,
       b,
       async (c) => {
-        const t = await pending(c, idOf(r));
-        const a = await animal(c, t.animal_id);
-        actualDate(b.date, a.arrival_date);
-        await c.query(
-          "UPDATE care_tasks SET status='DONE',actual_date=$2 WHERE id=$1",
-          [t.id, b.date],
-        );
-        await c.query(
-          "INSERT INTO health_records(animal_id,date,content,status,notes,task_id,actor_id) VALUES($1,$2,$3,$4,$5,$6,$7)",
-          [
-            t.animal_id,
-            b.date,
-            t.title,
-            b.status,
-            b.notes,
-            t.id,
-            r.account!.id,
-          ],
-        );
-        await updateHealth(c, t.animal_id);
+        await completeTask(c, idOf(r), b, r.account!.id);
         return { ok: true };
       },
       b.requestId,
     );
   });
+  app.post(
+    "/api/care-tasks/batch/complete",
+    { ...examine, bodyLimit: 65536 },
+    async (r) => {
+      const b = completionBody
+        .extend({ taskIds: batchAnimalIds })
+        .parse(r.body);
+      return write(
+        r,
+        b,
+        async (c) => {
+          for (const id of b.taskIds)
+            await completeTask(c, id, b, r.account!.id);
+          return { ok: true, count: b.taskIds.length };
+        },
+        b.requestId,
+      );
+    },
+  );
+  app.post(
+    "/api/care-tasks/batch/cancel",
+    { ...care, bodyLimit: 65536 },
+    async (r) => {
+      const b = z
+        .object({ taskIds: batchAnimalIds, requestId: uuid })
+        .strict()
+        .parse(r.body);
+      return write(
+        r,
+        b,
+        async (c) => {
+          for (const id of b.taskIds) await pending(c, id);
+          await c.query(
+            "UPDATE care_tasks SET status='CANCELLED' WHERE id=ANY($1::uuid[])",
+            [b.taskIds],
+          );
+          return { ok: true, count: b.taskIds.length };
+        },
+        b.requestId,
+      );
+    },
+  );
   app.post("/api/care-tasks/:id/cancel", care, async (r) =>
     write(r, null, async (c) => {
       await pending(c, idOf(r));

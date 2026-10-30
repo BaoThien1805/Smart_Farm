@@ -5,6 +5,7 @@ import { z } from "zod";
 import { ApiError } from "../auth/service.js";
 import { transaction } from "../database.js";
 import { animal, actualDate, capacity, date, today } from "../farm/routes.js";
+import { auditFinanceEntry as audit } from "./audit.js";
 
 const uuid = z.string().uuid();
 const amount = z.number().int().positive().max(1000000000000);
@@ -44,29 +45,10 @@ const range = z
       b.from <= b.to && Date.parse(b.to) - Date.parse(b.from) <= 730 * 86400000,
     "Khoảng ngày phải đúng thứ tự và tối đa 730 ngày.",
   );
-const entrySelect = `SELECT e.id,e.date,e.kind,e.category,e.amount::text,e.content,e.sale_id AS "saleId",e.created_at AS "createdAt",e.updated_at AS "updatedAt",u.name AS "actorName",e.cancelled_at AS "cancelledAt",e.cancel_reason AS "cancelReason",cu.name AS "cancelledByName" FROM finance_entries e JOIN public.users u ON u.id=e.actor_id LEFT JOIN public.users cu ON cu.id=e.cancelled_by`;
+const entrySelect = `SELECT e.id,e.date,e.kind,e.category,e.amount::text,e.content,e.sale_id AS "saleId",e.stock_entry_id AS "stockEntryId",e.created_at AS "createdAt",e.updated_at AS "updatedAt",u.name AS "actorName",e.cancelled_at AS "cancelledAt",e.cancel_reason AS "cancelReason",cu.name AS "cancelledByName" FROM finance_entries e JOIN public.users u ON u.id=e.actor_id LEFT JOIN public.users cu ON cu.id=e.cancelled_by`;
 const saleSelect = `SELECT s.id,s.animal_id AS "animalId",a.code AS "animalCode",s.date,s.amount::text,s.buyer,s.notes,u.name AS "actorName",s.created_at AS "createdAt",s.cancelled_at AS "cancelledAt",s.cancel_reason AS "cancelReason",cu.name AS "cancelledByName",s.restore_date AS "restoreDate",p.name AS "restorePenName" FROM sales s JOIN animals a ON a.id=s.animal_id JOIN public.users u ON u.id=s.actor_id LEFT JOIN public.users cu ON cu.id=s.cancelled_by LEFT JOIN pens p ON p.id=s.restore_pen_id`;
 function conflict(message: string): never {
   throw new ApiError(409, "FINANCE_CONFLICT", message);
-}
-async function audit(
-  c: PoolClient,
-  entryId: string,
-  action: string,
-  actorId: string,
-  why: string,
-  before: unknown = null,
-) {
-  await c.query(
-    "INSERT INTO finance_audit(entry_id,action,before_data,after_data,reason,actor_id) SELECT id,$2,$3::jsonb,jsonb_set(to_jsonb(e),'{amount}',to_jsonb(e.amount::text)),$4,$5 FROM finance_entries e WHERE id=$1",
-    [
-      entryId,
-      action,
-      before === null ? null : JSON.stringify(before),
-      why,
-      actorId,
-    ],
-  );
 }
 export async function registerFinanceRoutes(
   app: FastifyInstance,
@@ -117,6 +99,10 @@ export async function registerFinanceRoutes(
       throw new ApiError(404, "NOT_FOUND", "Không tìm thấy khoản thu chi.");
     if (e.sale_id)
       conflict("Khoản thu bán vật nuôi chỉ thay đổi qua thao tác hủy bán.");
+    if (e.stock_entry_id)
+      conflict(
+        "Khoản chi mua thức ăn chỉ thay đổi qua thao tác hủy phiếu nhập kho.",
+      );
     if (e.cancelled_at) conflict("Khoản thu chi đã hủy.");
     return e;
   }

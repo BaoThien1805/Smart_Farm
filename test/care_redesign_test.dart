@@ -109,6 +109,119 @@ void main() {
     TestWidgetsFlutterBinding.ensureInitialized();
     setUpAll(loadUiPreviewFonts);
   }
+  testWidgets(
+    'due-date filter composes with status and cancels picker without changing dates',
+    (t) async {
+      final fixture = CareFixture();
+      await mountCare(t, fixture);
+      await tapCare(t, find.text('Hôm nay'));
+      expect(task('today'), findsOneWidget);
+      expect(task('overdue'), findsNothing);
+      expect(
+        fixture.requests.last.url.queryParameters,
+        containsPair('from', fixture.today),
+      );
+      expect(
+        fixture.requests.last.url.queryParameters,
+        containsPair('to', fixture.today),
+      );
+      await tapCare(t, find.text('Lọc ngày'));
+      expect(find.text('Lọc theo ngày hẹn'), findsOneWidget);
+      await t.binding.handlePopRoute();
+      await t.pumpAndSettle();
+      expect(task('today'), findsOneWidget);
+      await tapCare(t, find.widgetWithText(ChoiceChip, 'Đã hoàn thành'));
+      expect(task('done'), findsOneWidget);
+      expect(fixture.requests.last.url.queryParameters['from'], fixture.today);
+      await tapCare(t, find.text('Xóa lọc ngày'));
+      expect(
+        fixture.requests.last.url.queryParameters.containsKey('from'),
+        isFalse,
+      );
+      expect(fixture.requests.last.url.queryParameters['status'], 'DONE');
+      expect(t.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'vet completes selected schedules in one request and preserves retry payload',
+    (t) async {
+      final fixture = CareFixture('VET')
+        ..writeError = 'Có lịch đã thay đổi. Thử lại.';
+      final boundary = await mountCare(t, fixture, width: 360);
+      await tapCare(t, find.text('Chọn nhiều'));
+      await tapCare(t, find.text('Chọn tất cả trang này'));
+      expect(find.text('Đã chọn 2 lịch'), findsOneWidget);
+      await t.ensureVisible(find.text('Lịch chăm sóc'));
+      await captureCare(t, boundary, 'selected-care-360');
+      await tapCare(t, find.text('Hoàn thành đã chọn'));
+      expect(find.text('Hoàn thành 2 lịch'), findsOneWidget);
+      await captureCare(t, boundary, 'complete-selected-care-360');
+      await fillCare(t, 'Ghi chú kết quả', 'Đã kiểm tra cả nhóm');
+      await tapCare(
+        t,
+        find.widgetWithText(FilledButton, 'Xác nhận hoàn thành'),
+      );
+      expect(find.text('Có lịch đã thay đổi. Thử lại.'), findsOneWidget);
+      final body = fixture.bodies.single!;
+      expect(body['taskIds'], ['overdue', 'today']);
+      expect(body['notes'], 'Đã kiểm tra cả nhóm');
+      expect(
+        fixture.writes.single.url.path,
+        endsWith('/care-tasks/batch/complete'),
+      );
+      fixture.writeError = null;
+      await tapCare(
+        t,
+        find.widgetWithText(FilledButton, 'Xác nhận hoàn thành'),
+      );
+      expect(fixture.bodies.last, body);
+      expect(find.text('Đã chọn 0 lịch'), findsOneWidget);
+      expect(fixture.healthRecords, hasLength(2));
+      expect(t.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'staff selects across pages, clears on filter change and only cancels batches',
+    (t) async {
+      final fixture = CareFixture('STAFF');
+      final seed = Map<String, dynamic>.from(fixture.tasks.first);
+      fixture.tasks
+        ..clear()
+        ..addAll(
+          List.generate(
+            25,
+            (i) => {...seed, 'id': 'page-$i', 'dueDate': fixture.today},
+          ),
+        );
+      await mountCare(t, fixture);
+      await tapCare(t, find.text('Chọn nhiều'));
+      await tapCare(t, find.text('Chọn tất cả trang này'));
+      expect(find.text('Đã chọn 20 lịch'), findsOneWidget);
+      await tapCare(t, find.byTooltip('Trang sau'));
+      await tapCare(t, find.byKey(const ValueKey('care-select-page-20')));
+      expect(find.text('Đã chọn 21 lịch'), findsOneWidget);
+      expect(find.text('Hoàn thành đã chọn'), findsNothing);
+      await tapCare(t, find.text('Hôm nay'));
+      expect(find.text('Đã chọn 0 lịch'), findsOneWidget);
+      expect(fixture.requests.last.url.queryParameters['page'], '1');
+      await tapCare(t, find.text('Chọn tất cả trang này'));
+      await tapCare(t, find.text('Hủy lịch đã chọn'));
+      await tapCare(t, find.widgetWithText(TextButton, 'Hủy'));
+      expect(fixture.writes, isEmpty);
+      expect(find.text('Đã chọn 20 lịch'), findsOneWidget);
+      await tapCare(t, find.text('Hủy lịch đã chọn'));
+      await tapCare(t, find.widgetWithText(FilledButton, 'Xác nhận hủy'));
+      expect(
+        fixture.writes.single.url.path,
+        endsWith('/care-tasks/batch/cancel'),
+      );
+      expect(fixture.bodies.single!['taskIds'], hasLength(20));
+      expect(find.text('Đã chọn 0 lịch'), findsOneWidget);
+      expect(t.takeException(), isNull);
+    },
+  );
   for (final role in ['ADMIN', 'STAFF', 'VET', 'ACCOUNTANT']) {
     testWidgets('$role has correct schedule and completion capabilities', (
       t,
@@ -118,6 +231,7 @@ void main() {
       final care = role != 'ACCOUNTANT',
           examine = ['ADMIN', 'VET'].contains(role);
       expect(find.text('Đặt lịch'), care ? findsOneWidget : findsNothing);
+      expect(find.text('Chọn nhiều'), care ? findsOneWidget : findsNothing);
       expect(
         taskButton('overdue', 'Sửa lịch'),
         care ? findsOneWidget : findsNothing,

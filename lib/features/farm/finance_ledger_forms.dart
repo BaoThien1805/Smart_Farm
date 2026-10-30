@@ -16,9 +16,7 @@ Future<bool> financeLedgerForm(
 }) async {
   if (cancelling && entry == null) return false;
   if (entry != null &&
-      (entry.text('saleId').isNotEmpty ||
-          entry.text('category') == 'ANIMAL_SALE' ||
-          entry.text('cancelledAt').isNotEmpty)) {
+      (isLinkedFinanceEntry(entry) || entry.text('cancelledAt').isNotEmpty)) {
     return false;
   }
   return await showDialog<bool>(

@@ -20,7 +20,6 @@
     "db:seed": "tsx --env-file=.env scripts/seed.ts",
     "test": "tsx --test --test-concurrency=1 test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "preview": "tsx scripts/preview.ts",
     "format": "prettier --write src scripts test support"
   },
   "dependencies": {

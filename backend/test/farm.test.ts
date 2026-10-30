@@ -1563,3 +1563,436 @@ test("pen icons persist presets and transparent uploads, preserve omitted values
   await migrate(pool);
   assert.equal((await pen()).iconKey, "auto");
 });
+
+async function profileWeightSetup() {
+  const key = randomUUID().slice(0, 8);
+  const species = (
+    await send("POST", "/api/farm/species", { name: "Loài cân " + key })
+  ).json().item.id;
+  const breed = (
+    await send("POST", "/api/farm/breeds", {
+      name: "Giống cân",
+      speciesId: species,
+    })
+  ).json().item.id;
+  const area = (
+    await send("POST", "/api/farm/areas", { name: "Khu cân " + key })
+  ).json().item.id;
+  const pen = (
+    await send("POST", "/api/farm/pens", {
+      code: "WG-" + key,
+      name: "Chuồng cân",
+      areaId: area,
+      capacity: 10,
+    })
+  ).json().item.id;
+  return {
+    ...animalInput("WG-" + key, pen),
+    breedId: breed,
+    arrivalDate: "2026-01-01",
+  };
+}
+
+test("create/edit profile weights commit together, preserve old measurements and retry once", async () => {
+  const body = {
+    ...(await profileWeightSetup()),
+    requestId: randomUUID(),
+    weight: { kg: 20.125, date: "2026-01-01" },
+  };
+  const created = await send("POST", "/api/animals", body);
+  assert.equal(created.statusCode, 200, created.body);
+  const id = created.json().animal.id;
+  assert.equal((await send("POST", "/api/animals", body)).json().animal.id, id);
+  const { penId: _, ...profile } = body;
+  const update = {
+    ...profile,
+    name: "Cập nhật cùng lần cân",
+    requestId: randomUUID(),
+    weight: { kg: 25.5, date: now },
+  };
+  const updated = await send("PATCH", `/api/animals/${id}`, update);
+  assert.equal(updated.statusCode, 200, updated.body);
+  assert.equal(
+    (await send("PATCH", `/api/animals/${id}`, update)).statusCode,
+    200,
+  );
+  const detail = (await send("GET", `/api/animals/${id}`)).json();
+  assert.equal(detail.animal.name, update.name);
+  assert.deepEqual(
+    detail.weights.map((w: { kg: number }) => w.kg),
+    [20.125, 25.5],
+  );
+  assert.equal(
+    (
+      await send("PATCH", `/api/animals/${id}`, {
+        ...update,
+        requestId: randomUUID(),
+        name: "Không được lưu",
+      })
+    ).statusCode,
+    409,
+  );
+  assert.equal(
+    (await send("GET", `/api/animals/${id}`)).json().animal.name,
+    update.name,
+  );
+  assert.equal(
+    (
+      await send("PATCH", `/api/animals/${id}`, {
+        ...update,
+        weight: { kg: 26, date: now },
+      })
+    ).statusCode,
+    409,
+  );
+});
+
+test("invalid profile weight or date never leaves a partial animal", async () => {
+  const body = await profileWeightSetup();
+  for (const kg of [0, -1, 100001, 1.0001]) {
+    const response = await send("POST", "/api/animals", {
+      ...body,
+      weight: { kg, date: body.arrivalDate },
+    });
+    assert.equal(response.statusCode, 400, response.body);
+  }
+  for (const date of ["2025-12-31", "2099-01-01"]) {
+    const response = await send("POST", "/api/animals", {
+      ...body,
+      requestId: randomUUID(),
+      weight: { kg: 20, date },
+    });
+    assert.equal(response.statusCode, 409, response.body);
+  }
+  assert.equal(
+    (await send("GET", `/api/animals?search=${body.code}`)).json().total,
+    0,
+  );
+});
+
+test("batch initial weights are per animal, atomic and idempotent", async () => {
+  const { code, ...body } = await profileWeightSetup();
+  const payload = {
+    ...body,
+    firstCode: `${code}-01`,
+    quantity: 2,
+    requestId: randomUUID(),
+    weight: { kg: 0.125, date: body.arrivalDate },
+  };
+  const created = await send("POST", "/api/animals/batch/create", payload);
+  assert.equal(created.statusCode, 200, created.body);
+  assert.deepEqual(
+    (await send("POST", "/api/animals/batch/create", payload)).json(),
+    created.json(),
+  );
+  for (const animal of created.json().animals) {
+    const weights = (await send("GET", `/api/animals/${animal.id}`)).json()
+      .weights;
+    assert.equal(weights.length, 1);
+    assert.equal(weights[0].kg, 0.125);
+  }
+  const invalid = await send("POST", "/api/animals/batch/create", {
+    ...payload,
+    firstCode: `${code}-10`,
+    requestId: randomUUID(),
+    weight: { kg: 1, date: "2025-01-01" },
+  });
+  assert.equal(invalid.statusCode, 409, invalid.body);
+  assert.equal(
+    (await send("GET", `/api/animals?search=${code}-10`)).json().total,
+    0,
+  );
+});
+
+let careBatchTasks: string[] = [];
+let careBatchAnimal: string;
+let batchVetToken: string,
+  batchStaffToken: string,
+  batchAccountantToken: string;
+const careBatchCall = (
+  method: "GET" | "POST",
+  url: string,
+  payload?: object,
+  token = adminToken,
+) =>
+  app.inject({
+    method,
+    url,
+    remoteAddress: "127.0.0.84",
+    headers: authorization(token),
+    ...(payload ? { payload } : {}),
+  });
+
+test("care date range is inclusive, validated and consistent with pagination and status", async () => {
+  const input = await profileWeightSetup();
+  careBatchAnimal = (await send("POST", "/api/animals", input)).json().animal
+    .id;
+  for (const dueDate of ["2026-10-22", "2026-10-24", "2026-10-25"]) {
+    const created = await careBatchCall("POST", "/api/care-tasks", {
+      animalId: careBatchAnimal,
+      kind: "CHECKUP",
+      title: "Lịch ngày " + dueDate,
+      dueDate,
+    });
+    assert.equal(created.statusCode, 200, created.body);
+    careBatchTasks.push(created.json().task.id);
+  }
+  const query = `/api/care-tasks?animalId=${careBatchAnimal}&status=PENDING&from=2026-10-24&to=2026-10-25&pageSize=1`;
+  const first = await careBatchCall("GET", query);
+  assert.equal(first.statusCode, 200, first.body);
+  assert.equal(first.json().total, 2);
+  assert.equal(first.json().tasks[0].dueDate, "2026-10-24");
+  assert.equal(
+    (await careBatchCall("GET", query + "&page=2")).json().tasks[0].dueDate,
+    "2026-10-25",
+  );
+  assert.equal(
+    (
+      await careBatchCall(
+        "GET",
+        `/api/care-tasks?animalId=${careBatchAnimal}&from=2026-10-24&to=2026-10-24`,
+      )
+    ).json().total,
+    1,
+  );
+  assert.equal(
+    (
+      await careBatchCall(
+        "GET",
+        `/api/care-tasks?animalId=${careBatchAnimal}&to=2026-10-22`,
+      )
+    ).json().total,
+    1,
+  );
+  for (const range of [
+    "from=2026-10-25&to=2026-10-22",
+    "from=2026-02-30",
+    "to=bad",
+  ]) {
+    assert.equal(
+      (await careBatchCall("GET", "/api/care-tasks?" + range)).statusCode,
+      400,
+    );
+  }
+  for (const role of ["STAFF", "VET", "ACCOUNTANT"]) {
+    const email = `care-completion-${role.toLowerCase()}@test.local`;
+    const created = await careBatchCall("POST", "/api/users", {
+      name: role,
+      role,
+      email,
+      password: adminPassword,
+    });
+    assert.equal(created.statusCode, 201, created.body);
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      remoteAddress: "127.0.0.84",
+      payload: { email, password: adminPassword },
+    });
+    assert.equal(login.statusCode, 200, login.body);
+    if (role === "STAFF") batchStaffToken = login.json().token;
+    if (role === "VET") batchVetToken = login.json().token;
+    if (role === "ACCOUNTANT") batchAccountantToken = login.json().token;
+  }
+});
+
+test("batch completion is vet-only for staff accounts, idempotent and keeps a record per task", async () => {
+  const payload = {
+    requestId: randomUUID(),
+    taskIds: careBatchTasks.slice(0, 2),
+    date: now,
+    status: "NORMAL",
+    notes: "Thực hiện theo đợt",
+  };
+  for (const token of [batchStaffToken, batchAccountantToken]) {
+    assert.equal(
+      (
+        await careBatchCall(
+          "POST",
+          "/api/care-tasks/batch/complete",
+          payload,
+          token,
+        )
+      ).statusCode,
+      403,
+    );
+  }
+  for (const taskIds of [[], ["bad"], Array(1001).fill(careBatchTasks[0])]) {
+    assert.equal(
+      (
+        await careBatchCall(
+          "POST",
+          "/api/care-tasks/batch/complete",
+          { ...payload, taskIds },
+          batchVetToken,
+        )
+      ).statusCode,
+      400,
+    );
+  }
+  const [done, retried] = await Promise.all([
+    careBatchCall(
+      "POST",
+      "/api/care-tasks/batch/complete",
+      payload,
+      batchVetToken,
+    ),
+    careBatchCall(
+      "POST",
+      "/api/care-tasks/batch/complete",
+      payload,
+      batchVetToken,
+    ),
+  ]);
+  assert.equal(done.statusCode, 200, done.body);
+  assert.deepEqual(retried.json(), done.json());
+  assert.equal(done.json().count, 2);
+  const detail = (await send("GET", `/api/animals/${careBatchAnimal}`)).json();
+  for (const id of careBatchTasks.slice(0, 2)) {
+    assert.equal(
+      detail.careTasks.find((t: { id: string }) => t.id === id).status,
+      "DONE",
+    );
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM health_records WHERE task_id=$1",
+          [id],
+        )
+      ).rows[0].n,
+      1,
+    );
+  }
+  assert.equal(
+    (
+      await careBatchCall(
+        "POST",
+        "/api/care-tasks/batch/complete",
+        { ...payload, notes: "Đổi nội dung" },
+        batchVetToken,
+      )
+    ).statusCode,
+    409,
+  );
+});
+
+test("mixed invalid/foreign schedules roll back the whole batch; staff can cancel pending schedules once", async () => {
+  const pendingId = careBatchTasks[2]!;
+  const complete = {
+    requestId: randomUUID(),
+    taskIds: [pendingId, careBatchTasks[0]!],
+    date: now,
+    status: "NEEDS_CARE",
+    notes: "Không lưu dở dang",
+  };
+  assert.equal(
+    (
+      await careBatchCall(
+        "POST",
+        "/api/care-tasks/batch/complete",
+        complete,
+        batchVetToken,
+      )
+    ).statusCode,
+    409,
+  );
+  assert.equal(
+    (await pool.query("SELECT status FROM care_tasks WHERE id=$1", [pendingId]))
+      .rows[0].status,
+    "PENDING",
+  );
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*)::int AS n FROM health_records WHERE task_id=$1",
+        [pendingId],
+      )
+    ).rows[0].n,
+    0,
+  );
+  const cancel = { requestId: randomUUID(), taskIds: [pendingId] };
+  assert.equal(
+    (
+      await careBatchCall(
+        "POST",
+        "/api/care-tasks/batch/cancel",
+        cancel,
+        batchAccountantToken,
+      )
+    ).statusCode,
+    403,
+  );
+  assert.equal(
+    (
+      await careBatchCall(
+        "POST",
+        "/api/care-tasks/batch/cancel",
+        { ...cancel, taskIds: [pendingId, randomUUID()] },
+        batchStaffToken,
+      )
+    ).statusCode,
+    404,
+  );
+  assert.equal(
+    (await pool.query("SELECT status FROM care_tasks WHERE id=$1", [pendingId]))
+      .rows[0].status,
+    "PENDING",
+  );
+  const owner = await app.inject({
+    method: "POST",
+    url: "/api/auth/register",
+    remoteAddress: "127.0.0.85",
+    payload: {
+      name: "Chủ khác",
+      farmName: "Trại khác",
+      email: `care-other-${randomUUID()}@test.local`,
+      password: adminPassword,
+    },
+  });
+  assert.equal(owner.statusCode, 201, owner.body);
+  assert.equal(
+    (
+      await careBatchCall(
+        "POST",
+        "/api/care-tasks/batch/complete",
+        { ...complete, taskIds: [pendingId] },
+        owner.json().token,
+      )
+    ).statusCode,
+    404,
+  );
+  assert.equal(
+    (
+      await careBatchCall(
+        "POST",
+        "/api/care-tasks/batch/cancel",
+        cancel,
+        owner.json().token,
+      )
+    ).statusCode,
+    404,
+  );
+  const cancelled = await careBatchCall(
+    "POST",
+    "/api/care-tasks/batch/cancel",
+    cancel,
+    batchStaffToken,
+  );
+  assert.equal(cancelled.statusCode, 200, cancelled.body);
+  assert.equal(
+    (
+      await careBatchCall(
+        "POST",
+        "/api/care-tasks/batch/cancel",
+        cancel,
+        batchStaffToken,
+      )
+    ).statusCode,
+    200,
+  );
+  assert.equal(
+    (await pool.query("SELECT status FROM care_tasks WHERE id=$1", [pendingId]))
+      .rows[0].status,
+    "CANCELLED",
+  );
+});

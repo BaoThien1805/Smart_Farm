@@ -62,7 +62,19 @@ Future<void> fillEvent(WidgetTester t, String label, String value) async {
 }
 
 Future<void> openEvent(WidgetTester t, AnimalEventKind kind) async {
-  await tapEvent(t, find.text(kind.title));
+  final tab = switch (kind) {
+    AnimalEventKind.weights => 1,
+    AnimalEventKind.transfer => 3,
+    AnimalEventKind.health || AnimalEventKind.exams => 2,
+    AnimalEventKind.death => 0,
+  };
+  await tapEvent(t, find.byKey(ValueKey('profile-tab-$tab')));
+  await tapEvent(
+    t,
+    kind == AnimalEventKind.transfer || kind == AnimalEventKind.death
+        ? find.widgetWithText(OutlinedButton, kind.title)
+        : find.widgetWithText(FilledButton, kind.title),
+  );
   if (kind == AnimalEventKind.death) {
     expect(find.textContaining('giải phóng chỗ chuồng'), findsOneWidget);
     await tapEvent(t, find.widgetWithText(FilledButton, 'Xác nhận'));
@@ -133,8 +145,18 @@ void main() {
         AnimalEventKind.death: role == 'ADMIN',
       };
       for (final entry in allowed.entries) {
+        final tab = switch (entry.key) {
+          AnimalEventKind.weights => 1,
+          AnimalEventKind.transfer => 3,
+          AnimalEventKind.health || AnimalEventKind.exams => 2,
+          AnimalEventKind.death => 0,
+        };
+        await tapEvent(t, find.byKey(ValueKey('profile-tab-$tab')));
         expect(
-          find.text(entry.key.title),
+          entry.key == AnimalEventKind.transfer ||
+                  entry.key == AnimalEventKind.death
+              ? find.widgetWithText(OutlinedButton, entry.key.title)
+              : find.widgetWithText(FilledButton, entry.key.title),
           entry.value ? findsOneWidget : findsNothing,
         );
         if (entry.value) {

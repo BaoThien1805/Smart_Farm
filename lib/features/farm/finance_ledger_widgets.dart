@@ -193,6 +193,8 @@ class _FinanceAuditDialogState extends State<FinanceAuditDialog> {
         'Lý do hủy': (data['cancel_reason'] ?? data['cancelReason']).toString(),
       if ((data['sale_id'] ?? data['saleId']) != null)
         'Nguồn': 'Liên kết giao dịch bán',
+      if ((data['stock_entry_id'] ?? data['stockEntryId']) != null)
+        'Nguồn': 'Nhập kho thức ăn',
       if ((data['updated_at'] ?? data['updatedAt']) != null)
         'Cập nhật': financeTimestamp(
           (data['updated_at'] ?? data['updatedAt']).toString(),

@@ -3,7 +3,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool, types, type PoolClient } from "pg";
 import { farmMigration, penDeletionMigration } from "./farm/migration.js";
 import { inventoryMigration } from "./inventory/migration.js";
-import { financeMigration } from "./finance/migration.js";
+import {
+  financeMigration,
+  stockPurchaseMigration,
+} from "./finance/migration.js";
 import { reproductionMigration } from "./reproduction/migration.js";
 import { penIconsMigration } from "./farm/pen-icons.js";
 types.setTypeParser(1082, (value) => value);
@@ -67,6 +70,7 @@ export async function createFarmTables(client: PoolClient, schema: string) {
   await client.query(reproductionMigration);
   await client.query(penIconsMigration);
   await client.query(penDeletionMigration);
+  await client.query(stockPurchaseMigration);
 }
 
 export async function transaction<T>(
@@ -343,6 +347,26 @@ export async function migrate(pool: Pool) {
       await client.query("SELECT set_config('search_path','public',true)");
       await client.query(
         "INSERT INTO public.schema_migrations(version) VALUES(14)",
+      );
+    }
+    const stockPurchases = await client.query(
+      "SELECT 1 FROM public.schema_migrations WHERE version=15",
+    );
+    if (!stockPurchases.rowCount) {
+      const farms = await client.query<{ schema_name: string }>(
+        "SELECT schema_name FROM public.farms ORDER BY id",
+      );
+      for (const farm of farms.rows) {
+        if (!/^(public|farm_[a-f0-9]{32})$/.test(farm.schema_name))
+          throw new Error("Invalid farm schema");
+        await client.query("SELECT set_config('search_path',$1,true)", [
+          farm.schema_name,
+        ]);
+        await client.query(stockPurchaseMigration);
+      }
+      await client.query("SELECT set_config('search_path','public',true)");
+      await client.query(
+        "INSERT INTO public.schema_migrations(version) VALUES(15)",
       );
     }
   });

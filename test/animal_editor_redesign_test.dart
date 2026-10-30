@@ -124,6 +124,53 @@ void main() {
     TestWidgetsFlutterBinding.ensureInitialized();
     setUpAll(loadUiPreviewFonts);
   }
+  for (final editing in [false, true]) {
+    testWidgets(
+      'profile weight is optional, atomic in payload and stable on retry (editing: $editing)',
+      (t) async {
+        final fixture = AnimalEditorFixture()..failSave = true;
+        await mountEditor(t, fixture, editing: editing, width: 360);
+        if (!editing) await prepareCreate(t);
+        final weightLabel = editing
+            ? 'Cân nặng mới (kg)'
+            : 'Cân nặng ban đầu (kg)';
+        await fillEditor(t, weightLabel, '25,125');
+        await tapEditor(t, saveButton);
+        expect(fixture.bodies, hasLength(1));
+        final body = fixture.bodies.single;
+        expect(body['weight'], {
+          'kg': 25.125,
+          'date': editing ? farmToday() : body['arrivalDate'],
+        });
+        expect(body['requestId'], matches(r'^[0-9a-f-]{36}$'));
+        expect(
+          t.widget<TextFormField>(field(weightLabel)).controller!.text,
+          '25,125',
+        );
+        fixture.failSave = false;
+        await tapEditor(t, saveButton);
+        expect(fixture.bodies.last, body);
+        expect(t.takeException(), isNull);
+      },
+    );
+  }
+  testWidgets('initial weight validates precision and can be left blank', (
+    t,
+  ) async {
+    final fixture = AnimalEditorFixture();
+    await mountEditor(t, fixture);
+    await prepareCreate(t);
+    for (final value in ['0', '-1', 'NaN', 'Infinity', '100001', '1.0001']) {
+      await fillEditor(t, 'Cân nặng ban đầu (kg)', value);
+      await tapEditor(t, saveButton);
+      expect(fixture.bodies, isEmpty);
+    }
+    await fillEditor(t, 'Cân nặng ban đầu (kg)', '');
+    await tapEditor(t, saveButton);
+    expect(fixture.bodies.single.containsKey('weight'), isFalse);
+    expect(t.takeException(), isNull);
+  });
+
   Future<void> prepareBatch(WidgetTester t, {bool largePen = true}) async {
     await prepareCreate(
       t,

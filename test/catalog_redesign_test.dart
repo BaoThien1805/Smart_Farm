@@ -109,6 +109,106 @@ void main() {
     TestWidgetsFlutterBinding.ensureInitialized();
     setUpAll(loadUiPreviewFonts);
   }
+  for (final hasAreas in [false, true]) {
+    testWidgets(
+      'pen form creates and selects an area without losing input (existing: $hasAreas)',
+      (t) async {
+        final fixture = CatalogFixture();
+        if (!hasAreas) {
+          fixture.data['areas']!.clear();
+          fixture.data['pens']!.clear();
+        }
+        await mountCatalog(
+          t,
+          fixture: fixture,
+          availableKinds: const ['pens'],
+          width: hasAreas ? 412 : 360,
+        );
+        await tapCatalog(t, find.widgetWithText(FilledButton, 'Thêm'));
+        await t.enterText(
+          find.widgetWithText(TextFormField, 'Tên'),
+          'Chuồng mới',
+        );
+        await t.enterText(
+          find.widgetWithText(TextFormField, 'Mã chuồng'),
+          'CH-01',
+        );
+        await t.enterText(
+          find.widgetWithText(TextFormField, 'Sức chứa (con)'),
+          '25',
+        );
+        await tapCatalog(t, find.widgetWithText(TextButton, 'Thêm khu vực'));
+        await t.enterText(
+          find.widgetWithText(TextFormField, 'Tên khu vực'),
+          'Khu mới',
+        );
+        await tapCatalog(t, find.widgetWithText(FilledButton, 'Lưu').last);
+        final area = fixture.data['areas']!.last;
+        expect(area['name'], 'Khu mới');
+        expect(
+          t
+              .widget<DropdownButtonFormField<String>>(
+                find
+                    .widgetWithText(DropdownButtonFormField<String>, 'Khu vực')
+                    .last,
+              )
+              .initialValue,
+          area['id'],
+        );
+        expect(
+          t
+              .widget<TextFormField>(find.widgetWithText(TextFormField, 'Tên'))
+              .controller!
+              .text,
+          'Chuồng mới',
+        );
+        await saveCatalog(t);
+        expect(fixture.data['pens']!.last, containsPair('areaId', area['id']));
+        expect(fixture.bodies.last, containsPair('code', 'CH-01'));
+        expect(fixture.bodies.last, containsPair('capacity', 25));
+        expect(find.text('Thêm chuồng trại'), findsNothing);
+        expect(t.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('failed or cancelled area creation keeps the pen form usable', (
+    t,
+  ) async {
+    final fixture = CatalogFixture();
+    fixture.data['areas']!.clear();
+    fixture.data['pens']!.clear();
+    fixture.saveError = 'Tên khu vực đã tồn tại.';
+    await mountCatalog(t, fixture: fixture, availableKinds: const ['pens']);
+    await tapCatalog(t, find.widgetWithText(FilledButton, 'Thêm'));
+    await t.enterText(
+      find.widgetWithText(TextFormField, 'Tên'),
+      'Chuồng giữ lại',
+    );
+    await tapCatalog(t, find.widgetWithText(TextButton, 'Thêm khu vực'));
+    await t.enterText(
+      find.widgetWithText(TextFormField, 'Tên khu vực'),
+      'Khu A',
+    );
+    await tapCatalog(t, find.widgetWithText(FilledButton, 'Lưu').last);
+    expect(find.text('Tên khu vực đã tồn tại.'), findsOneWidget);
+    expect(fixture.data['areas'], isEmpty);
+    await tapCatalog(t, find.widgetWithText(TextButton, 'Hủy').last);
+    expect(
+      t
+          .widget<TextFormField>(find.widgetWithText(TextFormField, 'Tên'))
+          .controller!
+          .text,
+      'Chuồng giữ lại',
+    );
+    final save = find.widgetWithText(FilledButton, 'Lưu');
+    expect(t.widget<FilledButton>(save).onPressed, isNotNull);
+    await saveCatalog(t);
+    expect(find.text('Vui lòng chọn.'), findsOneWidget);
+    expect(fixture.data['pens'], isEmpty);
+    expect(t.takeException(), isNull);
+  });
+
   testWidgets(
     'pen icon preset persists independently of residents and resets to automatic',
     (t) async {

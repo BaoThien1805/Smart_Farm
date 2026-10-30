@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_farm/core/theme.dart';
 import 'package:smart_farm/core/ui_components.dart';
 
-import 'preview/design_system_preview.dart';
+import 'support/design_system_fixture.dart';
 import 'support/ui_preview.dart';
 
 void main() {

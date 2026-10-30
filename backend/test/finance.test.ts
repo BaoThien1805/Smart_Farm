@@ -205,7 +205,8 @@ test("migration 6 backfills existing owner schemas, preserves farm data and is r
       `DROP TABLE "${f.schema_name}".finance_audit,"${f.schema_name}".finance_entries,"${f.schema_name}".sales`,
     );
   }
-  await pool.query("DELETE FROM schema_migrations WHERE version=6");
+  // Removing the finance tables also removes the later stock-expense link.
+  await pool.query("DELETE FROM schema_migrations WHERE version IN (6,15)");
   await migrate(pool);
   await migrate(pool);
   const report = await send(

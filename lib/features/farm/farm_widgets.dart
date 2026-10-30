@@ -11,6 +11,8 @@ class FarmField {
   final String initial;
   final bool requiredValue, numeric, date, boolean;
   final Map<String, String>? options;
+  final Future<FarmRecord?> Function(BuildContext context)? createOption;
+  final String? createOptionLabel;
   final bool readOnly;
   final bool allowZero;
   final bool integer;
@@ -25,6 +27,8 @@ class FarmField {
     this.date = false,
     this.boolean = false,
     this.options,
+    this.createOption,
+    this.createOptionLabel,
     this.readOnly = false,
     this.allowZero = false,
     this.integer = false,
@@ -41,6 +45,7 @@ Future<bool> farmForm(
   String? codeKind,
   Widget? intro,
   Widget Function(bool busy)? extraFields,
+  String submitLabel = 'Lưu',
   required Future<void> Function(Map<String, dynamic>) save,
 }) async =>
     await showDialog<bool>(
@@ -54,6 +59,7 @@ Future<bool> farmForm(
         codeKind: codeKind,
         intro: intro,
         extraFields: extraFields,
+        submitLabel: submitLabel,
       ),
     ) ??
     false;
@@ -64,6 +70,7 @@ class _FarmDialog extends StatefulWidget {
   final String? codeKind;
   final Widget? intro;
   final Widget Function(bool busy)? extraFields;
+  final String submitLabel;
   final List<FarmField> fields;
   final Future<void> Function(Map<String, dynamic>) save;
   const _FarmDialog({
@@ -72,6 +79,7 @@ class _FarmDialog extends StatefulWidget {
     this.codeKind,
     this.intro,
     this.extraFields,
+    this.submitLabel = 'Lưu',
     required this.fields,
     required this.save,
   });
@@ -84,8 +92,12 @@ class _FarmDialogState extends State<_FarmDialog> {
   final errorAnchor = GlobalKey();
   late final Map<String, TextEditingController> controllers;
   late final Map<String, String?> selections;
+  late final Map<String, Map<String, String>> options;
+  late final Map<String, GlobalKey<FormFieldState<String>>> selectionKeys;
   late final Map<String, bool> flags;
   bool busy = false;
+  bool creatingOption = false;
+  bool get blocked => busy || creatingOption;
   String? error;
   @override
   void initState() {
@@ -96,12 +108,80 @@ class _FarmDialogState extends State<_FarmDialog> {
           text: f.date ? farmDate(f.initial) : f.initial,
         ),
     };
+    options = {
+      for (final f in widget.fields)
+        if (f.options != null) f.key: Map.of(f.options!),
+    };
+    selectionKeys = {
+      for (final f in widget.fields)
+        if (f.options != null) f.key: GlobalKey<FormFieldState<String>>(),
+    };
     selections = {
       for (final f in widget.fields)
-        f.key: f.initial.isEmpty ? null : f.initial,
+        f.key:
+            f.initial.isEmpty ||
+                (f.options != null && !f.options!.containsKey(f.initial))
+            ? null
+            : f.initial,
     };
     flags = {for (final f in widget.fields) f.key: f.initial != 'false'};
   }
+
+  Future<void> createOption(FarmField field) async {
+    if (blocked || field.readOnly || field.createOption == null) return;
+    setState(() {
+      creatingOption = true;
+      error = null;
+    });
+    try {
+      final created = await field.createOption!(context);
+      if (!mounted || created == null) return;
+      setState(() {
+        options[field.key]![created.id] = created.text('name');
+        selections[field.key] = created.id;
+      });
+      selectionKeys[field.key]!.currentState?.didChange(created.id);
+    } on ApiException catch (e) {
+      if (mounted) setState(() => error = e.message);
+    } finally {
+      if (mounted) setState(() => creatingOption = false);
+    }
+  }
+
+  Widget selectionField(FarmField field) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      DropdownButtonFormField<String>(
+        key: selectionKeys[field.key],
+        initialValue: selections[field.key],
+        isExpanded: true,
+        decoration: farmInputDecoration(label: field.title),
+        items: [
+          for (final entry in options[field.key]!.entries)
+            DropdownMenuItem(
+              value: entry.key,
+              child: Text(entry.value, overflow: TextOverflow.ellipsis),
+            ),
+        ],
+        onChanged: blocked || field.readOnly
+            ? null
+            : (value) => selections[field.key] = value,
+        validator: (value) =>
+            field.requiredValue && value == null ? 'Vui lòng chọn.' : null,
+      ),
+      if (field.createOption != null)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: blocked || field.readOnly
+                ? null
+                : () => createOption(field),
+            icon: const Icon(Icons.add),
+            label: Text(field.createOptionLabel ?? 'Thêm mới'),
+          ),
+        ),
+    ],
+  );
 
   @override
   void dispose() {
@@ -112,7 +192,7 @@ class _FarmDialogState extends State<_FarmDialog> {
   }
 
   Future<void> submit() async {
-    if (busy || !form.currentState!.validate()) return;
+    if (blocked || !form.currentState!.validate()) return;
     setState(() {
       busy = true;
       error = null;
@@ -154,17 +234,17 @@ class _FarmDialogState extends State<_FarmDialog> {
 
   @override
   Widget build(BuildContext context) => PopScope(
-    canPop: !busy,
+    canPop: !blocked,
     child: FarmFormLayout(
       title: widget.title,
       actions: [
         TextButton(
-          onPressed: busy ? null : () => Navigator.pop(context, false),
+          onPressed: blocked ? null : () => Navigator.pop(context, false),
           child: const Text('Hủy'),
         ),
         FilledButton(
-          onPressed: busy ? null : submit,
-          child: FarmSubmitLabel(busy: busy, label: 'Lưu'),
+          onPressed: blocked ? null : submit,
+          child: FarmSubmitLabel(busy: busy, label: widget.submitLabel),
         ),
       ],
       child: Form(
@@ -177,7 +257,7 @@ class _FarmDialogState extends State<_FarmDialog> {
               const SizedBox(height: 20),
             ],
             if (widget.extraFields != null) ...[
-              widget.extraFields!(busy),
+              widget.extraFields!(blocked),
               const SizedBox(height: 20),
             ],
             if (error != null)
@@ -198,7 +278,7 @@ class _FarmDialogState extends State<_FarmDialog> {
                         kind: widget.codeKind!,
                         name: controllers['name']?.text ?? '',
                         label: f.title,
-                        enabled: !busy,
+                        enabled: !blocked,
                         requiredValue: f.requiredValue,
                         suggestInitially: f.initial.isEmpty,
                       )
@@ -206,38 +286,18 @@ class _FarmDialogState extends State<_FarmDialog> {
                     ? SwitchListTile(
                         title: Text(f.title),
                         value: flags[f.key]!,
-                        onChanged: busy
+                        onChanged: blocked
                             ? null
                             : (v) => setState(() => flags[f.key] = v),
                       )
                     : f.options != null
-                    ? DropdownButtonFormField<String>(
-                        initialValue: selections[f.key],
-                        isExpanded: true,
-                        decoration: farmInputDecoration(label: f.title),
-                        items: [
-                          for (final e in f.options!.entries)
-                            DropdownMenuItem(
-                              value: e.key,
-                              child: Text(
-                                e.value,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                        ],
-                        onChanged: busy || f.readOnly
-                            ? null
-                            : (v) => selections[f.key] = v,
-                        validator: (v) => f.requiredValue && v == null
-                            ? 'Vui lòng chọn.'
-                            : null,
-                      )
+                    ? selectionField(f)
                     : TextFormField(
                         controller: controllers[f.key],
                         onChanged: f.key == 'name' && widget.codeKind != null
                             ? (_) => setState(() {})
                             : null,
-                        enabled: !busy,
+                        enabled: !blocked,
                         readOnly: f.date || f.readOnly,
                         decoration: farmInputDecoration(
                           label: f.title,
@@ -245,7 +305,7 @@ class _FarmDialogState extends State<_FarmDialog> {
                               ? !f.requiredValue && !f.readOnly
                                     ? IconButton(
                                         tooltip: 'Xóa ngày',
-                                        onPressed: busy
+                                        onPressed: blocked
                                             ? null
                                             : () => controllers[f.key]!.clear(),
                                         icon: const Icon(Icons.clear),
